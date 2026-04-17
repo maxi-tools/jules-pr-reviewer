@@ -103,6 +103,8 @@ async function run(): Promise<void> {
   const session = await customJules.session({
     prompt,
     source: { github: `${owner}/${repo}`, baseBranch: pr.base.ref },
+    requireApproval: false,
+    autoPr: false,
   });
   core.info(`Jules session: ${session.id}`);
 

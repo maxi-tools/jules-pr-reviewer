@@ -40744,6 +40744,8 @@ async function run() {
     const session = await customJules.session({
         prompt,
         source: { github: `${owner}/${repo}`, baseBranch: pr.base.ref },
+        requireApproval: false,
+        autoPr: false,
     });
     info(`Jules session: ${session.id}`);
     await waitUntilSessionReady(session);
