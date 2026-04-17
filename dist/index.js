@@ -40743,7 +40743,7 @@ async function run() {
     info('Creating Jules review session…');
     const session = await customJules.session({ prompt });
     info(`Jules session: ${session.id}`);
-    await new Promise(r => setTimeout(r, 3000));
+    await waitUntilSessionReady(session);
     let reviewMessage = '';
     try {
         for await (const activity of session.stream({ initialRetries: 20 })) {
@@ -40783,6 +40783,28 @@ async function run() {
     if (state === 'failure') {
         setFailed(`Jules review verdict: ${verdict}`);
     }
+}
+async function waitUntilSessionReady(session) {
+    const maxAttempts = 20;
+    let delay = 2000;
+    for (let i = 0; i < maxAttempts; i++) {
+        try {
+            await session.info();
+            info(`Session ${session.id} is ready after ${i + 1} attempt(s).`);
+            return;
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (!msg.includes('404')) {
+                warning(`info() threw non-404: ${msg}`);
+                return;
+            }
+            info(`Session not yet ready (attempt ${i + 1}/${maxAttempts})…`);
+            await new Promise(r => setTimeout(r, delay));
+            delay = Math.min(delay * 1.5, 15000);
+        }
+    }
+    warning('Session readiness check exhausted attempts; trying to stream anyway.');
 }
 function truncateDiff(diff, maxChars) {
     if (diff.length <= maxChars)

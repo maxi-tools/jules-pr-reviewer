@@ -103,7 +103,7 @@ async function run(): Promise<void> {
   const session = await customJules.session({ prompt });
   core.info(`Jules session: ${session.id}`);
 
-  await new Promise(r => setTimeout(r, 3000));
+  await waitUntilSessionReady(session);
 
   let reviewMessage = '';
   try {
@@ -148,6 +148,28 @@ async function run(): Promise<void> {
   if (state === 'failure') {
     core.setFailed(`Jules review verdict: ${verdict}`);
   }
+}
+
+async function waitUntilSessionReady(session: { id: string; info: () => Promise<unknown> }): Promise<void> {
+  const maxAttempts = 20;
+  let delay = 2000;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      await session.info();
+      core.info(`Session ${session.id} is ready after ${i + 1} attempt(s).`);
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('404')) {
+        core.warning(`info() threw non-404: ${msg}`);
+        return;
+      }
+      core.info(`Session not yet ready (attempt ${i + 1}/${maxAttempts})…`);
+      await new Promise(r => setTimeout(r, delay));
+      delay = Math.min(delay * 1.5, 15000);
+    }
+  }
+  core.warning('Session readiness check exhausted attempts; trying to stream anyway.');
 }
 
 function truncateDiff(diff: string, maxChars: number): string {
