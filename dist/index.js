@@ -40709,21 +40709,10 @@ async function run() {
         description: 'Jules is reviewing this PR…',
     });
     const inProgressBody = `${IN_PROGRESS_MARKER}\n🤖 **Jules is reviewing this PR.** Results will appear here shortly (typically 2–5 minutes).`;
-    const existing = await octokit.rest.issues.listComments({
-        owner, repo, issue_number: prNumber, per_page: 100,
+    const created = await octokit.rest.issues.createComment({
+        owner, repo, issue_number: prNumber, body: inProgressBody,
     });
-    const prior = existing.data.find(c => c.body?.includes(IN_PROGRESS_MARKER));
-    let commentId;
-    if (prior) {
-        await octokit.rest.issues.updateComment({ owner, repo, comment_id: prior.id, body: inProgressBody });
-        commentId = prior.id;
-    }
-    else {
-        const created = await octokit.rest.issues.createComment({
-            owner, repo, issue_number: prNumber, body: inProgressBody,
-        });
-        commentId = created.data.id;
-    }
+    const commentId = created.data.id;
     const compare = await octokit.rest.repos.compareCommitsWithBasehead({
         owner, repo,
         basehead: `${pr.base.sha}...${pr.head.sha}`,
