@@ -16,6 +16,8 @@ async function run(): Promise<void> {
   const skipForks = core.getBooleanInput('skip_forks');
   const bypassLabel = core.getInput('bypass_label');
   const statusContext = core.getInput('status_context');
+  const extraInstructions = core.getInput('extra_instructions');
+  const rulesFilePath = core.getInput('rules_file');
 
   const ctx = github.context;
   if (ctx.eventName !== 'pull_request' && ctx.eventName !== 'pull_request_target') {
@@ -76,6 +78,22 @@ async function run(): Promise<void> {
   });
   const diff = compare.data as unknown as string;
 
+  let rulesFromFile: string | undefined;
+  if (rulesFilePath) {
+    try {
+      const file = await octokit.rest.repos.getContent({
+        owner, repo, path: rulesFilePath, ref: pr.head.sha,
+      });
+      if ('content' in file.data && typeof file.data.content === 'string') {
+        rulesFromFile = Buffer.from(file.data.content, 'base64').toString('utf8');
+        core.info(`Loaded ${rulesFromFile.length} chars from ${rulesFilePath}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('404')) core.warning(`Could not load ${rulesFilePath}: ${msg}`);
+    }
+  }
+
   const prompt = buildReviewPrompt({
     repoFullName: `${owner}/${repo}`,
     prNumber,
@@ -84,6 +102,8 @@ async function run(): Promise<void> {
     baseBranch: pr.base.ref,
     headBranch: pr.head.ref,
     diff: truncateDiff(diff, 80_000),
+    extraInstructions: extraInstructions || undefined,
+    rulesFromFile,
   });
 
   const customJules = jules.with({ apiKey });

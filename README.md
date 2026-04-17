@@ -1,29 +1,49 @@
 # Jules PR Reviewer
 
-A GitHub Action that uses [Google Jules](https://jules.google) to review pull requests and post the review as a PR comment. Optionally gates merges via a commit status check.
+A GitHub Action that uses [Google Jules](https://jules.google) (Gemini-powered cloud coding agent) to review pull requests and post the review as a PR comment. Optionally gates merges via a commit status check.
 
-## What it does
+- Works on any language / framework — Jules is general-purpose.
+- Low noise by default: aggressive false-positive filter baked into the prompt.
+- Extensible: layer your own rules from the workflow or from a file in the repo.
+- Per-PR comment with severity-tagged findings + a merge gate.
 
-On every pull request:
+## What a review looks like
 
-1. Posts an in-progress comment on the PR so the author knows review has started.
-2. Sets a pending commit status (`jules/review`) visible on the Checks tab.
-3. Sends the PR diff to Jules for review.
-4. Replaces the in-progress comment with the final review.
-5. Flips the commit status to `success` / `failure` based on review verdict and your `fail_on` policy.
+```
+## Summary
+Adds a /user lookup endpoint and an /admin check. Three critical security flaws need fixing before merge.
 
-## Quick start
+## Strengths
+- Endpoint routing is clean and easy to follow.
 
-### 1. Add your Jules API key as a secret
+## Findings
+### [BLOCKING]
+- `src/db.js`, line 4: SQL injection — the id parameter is interpolated into the query. Use parameterized queries.
+- `src/server.js`, line 5: Hardcoded `sk_live_…` secret. Move to env var and rotate the token.
+- `src/server.js`, line 18: Auth token passed via URL query string. Pass via Authorization header instead.
 
-In your repo: **Settings → Secrets and variables → Actions → New repository secret**
+### [WARN]
+- `src/server.js`, lines 12–14: No error handling around `getUserById`. Wrap in try/catch and return 500.
+
+### [NIT]
+- `src/db.js`, line 1: Unused `createConnection` import.
+
+## Verdict
+VERDICT: block
+```
+
+## Setup
+
+### 1. Add your Jules API key as a repo secret
+
+`Settings → Secrets and variables → Actions → New repository secret`
 
 - Name: `JULES_API_KEY`
-- Value: your key from [jules.google.com](https://jules.google.com)
+- Value: key from [jules.google.com](https://jules.google.com) (after authenticating with GitHub)
 
 ### 2. Add the workflow
 
-Create `.github/workflows/pr-review.yml`:
+`.github/workflows/pr-review.yml`:
 
 ```yaml
 name: Jules PR Review
@@ -43,50 +63,119 @@ jobs:
         with:
           jules_api_key: ${{ secrets.JULES_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          fail_on: blocking
 ```
 
-### 3. (Optional) Require the check to merge
+### 3. (Optional) Gate merges on the review
 
-**Settings → Branches → Branch protection rules → Require status check → `jules/review`**.
+`Settings → Branches → Branch protection rules → Require status check → jules/review`.
 
-Without this step the red X is visible but non-blocking.
+Without this, a blocking verdict shows as a red X but won't stop merge.
+
+## Customizing the review
+
+Three ways to shape what Jules looks for (most → least common):
+
+### A. Inline rules in the workflow
+
+Best for quick tweaks or project-level rules.
+
+```yaml
+- uses: sanjay3290/jules-pr-reviewer@v1
+  with:
+    jules_api_key: ${{ secrets.JULES_API_KEY }}
+    github_token: ${{ secrets.GITHUB_TOKEN }}
+    extra_instructions: |
+      Project is a Flutter mobile app.
+
+      Additional blocking rules:
+      - Any setState() call inside build() is BLOCKING.
+      - Any hardcoded API URL (not read from Config) is BLOCKING.
+      - Missing await on a returned Future is BLOCKING.
+
+      Soft rules:
+      - Prefer const constructors where possible — raise as NIT.
+      - All public APIs must have dartdoc — raise as WARN.
+```
+
+### B. Rules file in the repo
+
+Best when rules are long, evolving, or shared across workflows. Default path: `.github/jules-review-rules.md`.
+
+```markdown
+# Review rules for my-org/my-repo
+
+## Always blocking
+- Direct writes to `users.balance` without going through `account-service`.
+- Any usage of `eval`, `Function(...)`, or `child_process.exec` with user input.
+
+## Framework conventions
+- React components must be functional (no class components).
+- All API handlers must be wrapped in `withAuth()`.
+
+## What to skip
+- Tests are linted separately — don't review test files.
+```
+
+The action reads the file from the PR's head commit. Override the path with `rules_file:` or disable with `rules_file: ""`.
+
+### C. Both
+
+The workflow's `extra_instructions` is appended after the rules file content. Use the file for stable rules and the workflow for quick situational overrides.
 
 ## Inputs
 
 | Input | Default | Description |
 |---|---|---|
-| `jules_api_key` | — | **Required.** Your Jules API key. |
-| `github_token` | — | **Required.** Usually `${{ secrets.GITHUB_TOKEN }}`. Needs `pull-requests: write` and `statuses: write`. |
-| `fail_on` | `blocking` | `never` \| `blocking` \| `any`. Controls when the commit status fails. |
+| `jules_api_key` | — | **Required.** Key from jules.google.com. |
+| `github_token` | — | **Required.** `${{ secrets.GITHUB_TOKEN }}`. |
+| `fail_on` | `blocking` | `never` \| `blocking` \| `any`. Controls commit-status state. |
 | `skip_drafts` | `true` | Skip review on draft PRs. |
-| `skip_forks` | `true` | Skip PRs from forks (prompt-injection risk via diff). |
-| `bypass_label` | `jules-override` | If this label is on the PR, review is skipped entirely. |
+| `skip_forks` | `true` | Skip PRs from forks (diff can contain prompt-injection payloads). |
+| `bypass_label` | `jules-override` | If the PR has this label, skip the review. |
 | `status_context` | `jules/review` | Commit status context name. |
+| `extra_instructions` | `''` | Markdown appended to the prompt. |
+| `rules_file` | `.github/jules-review-rules.md` | Path in repo to load as extra rules. Set empty to disable. |
 
-## Verdict & severity
+## Severity & verdict
 
 Jules is instructed to tag findings:
 
-- **`[BLOCKING]`** — security, correctness, data loss.
-- **`[WARN]`** — meaningful concerns, non-blocking.
-- **`[NIT]`** — style, naming.
+- **[BLOCKING]** — high-confidence correctness/security flaws. Only used when Jules is >80% sure.
+- **[WARN]** — meaningful concerns, non-blocking.
+- **[NIT]** — small readability / consistency notes. Capped at 3 per review.
 
-And to end with a verdict line: `VERDICT: approve | comment | block`.
+And end with a verdict line:
 
-`fail_on` policy maps verdict to status:
+| Verdict | Meaning |
+|---|---|
+| `VERDICT: approve` | No blocking issues. |
+| `VERDICT: comment` | Warnings or nits only. |
+| `VERDICT: block` | One or more blocking issues. |
 
-| `fail_on` | `approve` | `comment` | `block` |
+`fail_on` maps verdict → status:
+
+| `fail_on` | approve | comment | block |
 |---|---|---|---|
 | `never` | success | success | success |
 | `blocking` *(default)* | success | success | **failure** |
 | `any` | success | **failure** | **failure** |
 
+The **workflow job itself always passes** if the action ran successfully — the status check is what gates merge. Job failures indicate the action broke, not that the review found issues.
+
+## Prerequisites
+
+Your repo must be connected to your Jules account. After authenticating at jules.google.com with GitHub, the repos you authorize become available as sources. You can verify with:
+
+```bash
+JULES_API_KEY=... node -e "import('@google/jules-sdk').then(async m=>{for await (const s of m.jules.sources()) if (s.type==='githubRepo') console.log(s.githubRepo.owner+'/'+s.githubRepo.repo)})"
+```
+
 ## Notes
 
-- The action runs for the full duration of Jules' review (~2–5 min typical, 15 min max). On public repos Actions is free; on private repos it counts against your minutes.
-- Fork PRs are skipped by default because their diff can contain prompt-injection payloads.
-- Drafts are skipped by default; mark the PR `ready_for_review` to trigger review.
+- **Latency**: typical review is 40s–5min.
+- **Cost**: each PR open/push creates one Jules session. Rate-limit via `bypass_label`, label-gated workflow triggers, or `paths:` filters.
+- **Fork PRs**: skipped by default. To enable for trusted forks, set `skip_forks: false` and use `pull_request_target` with caution.
+- **Drafts**: skipped by default; mark `ready_for_review` to trigger.
 
 ## License
 

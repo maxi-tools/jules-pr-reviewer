@@ -33,6 +33,14 @@ inputs:
     description: 'Commit status context name.'
     required: false
     default: 'jules/review'
+  extra_instructions:
+    description: 'Free-form Markdown appended to the review prompt. Use to add project-specific rules, frameworks, or focus areas directly from the workflow.'
+    required: false
+    default: ''
+  rules_file:
+    description: 'Path (in the repo) to a Markdown file whose contents are injected into the prompt. Default .github/jules-review-rules.md if it exists. Set to empty string to disable.'
+    required: false
+    default: '.github/jules-review-rules.md'
 
 runs:
   using: 'node20'

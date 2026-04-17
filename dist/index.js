@@ -40613,44 +40613,78 @@ const jules = connect();
 
 ;// CONCATENATED MODULE: ./src/prompt.ts
 function buildReviewPrompt(args) {
-    const { repoFullName, prNumber, prTitle, prBody, baseBranch, headBranch, diff } = args;
-    return `You are an expert code reviewer. Review the pull request below.
+    const { repoFullName, prNumber, prTitle, prBody, baseBranch, headBranch, diff, extraInstructions, rulesFromFile, } = args;
+    return `You are an expert code reviewer. Review the pull request below with high precision and minimal false positives.
 
-### Context
+## Context
 - Repository: ${repoFullName}
 - PR #${prNumber}: ${prTitle}
 - Base: ${baseBranch} ← Head: ${headBranch}
 
-### PR description
+## PR description
 ${prBody || '(no description)'}
 
-### Diff
+## Diff
 \`\`\`diff
 ${diff}
 \`\`\`
+${rulesFromFile ? `
 
-### Instructions
-Evaluate the diff for correctness, security, maintainability, and style. Tag each finding with a severity:
-- **[BLOCKING]** — security flaws, correctness bugs, data loss risks, broken APIs.
-- **[WARN]** — meaningful concerns that should be addressed but do not block merge.
-- **[NIT]** — style, naming, minor suggestions.
+## Project-specific rules (loaded from repo)
+${rulesFromFile}
+` : ''}${extraInstructions ? `
 
-If the diff looks good overall, say so briefly and still call out any NITs.
+## Additional instructions (from workflow)
+${extraInstructions}
+` : ''}
 
-### Output format (STRICT)
-Respond in Markdown. Structure:
+## What to review
+Focus ONLY on lines changed in this diff. Evaluate for:
+
+- **Correctness**: logic errors, null/undefined handling, race conditions, off-by-ones, broken APIs, edge cases.
+- **Security**: injection risks (SQL/command/XSS), hardcoded secrets, insecure crypto, auth/authz flaws, sensitive data in logs or URLs.
+- **Reliability**: missing error handling where it matters, unhandled promise rejections, resource leaks.
+- **Maintainability**: duplication, unclear naming, dead code, violated project rules above.
+- **Tests**: new non-trivial logic without any test, or tests that assert nothing meaningful.
+
+## What NOT to flag (false-positive filter)
+Skip these — they add noise and erode trust:
+
+- Pre-existing issues in lines this PR did NOT modify.
+- Things a linter, typechecker, formatter, or compiler would catch (imports, type errors, style, trailing whitespace).
+- Pedantic nitpicks a senior engineer wouldn't raise.
+- Missing test coverage for trivial changes, missing docs, refactor suggestions beyond the diff's scope.
+- Stylistic preferences not codified in project rules.
+- Changes clearly intentional to the PR's goal even if they look unusual.
+- Hypothetical issues ("what if a future caller…") — only flag concrete problems.
+
+## Severity tags
+Tag each finding EXACTLY one of:
+
+- **[BLOCKING]** — high-confidence correctness/security flaws, data loss risks, broken auth, obvious bugs. Only use if you're >80% sure it's a real problem that will hit in practice.
+- **[WARN]** — meaningful concerns worth addressing but not blocking: missing error handling in a non-critical path, poor choice that will cause pain later.
+- **[NIT]** — small readability or consistency notes. Use sparingly; max 3 per review.
+
+If uncertain whether something is a real problem, DO NOT flag it.
+
+## Output format (STRICT)
+Respond in Markdown:
 
 ## Summary
-One short paragraph.
+One short paragraph stating what the PR does and your overall take.
+
+## Strengths
+1-3 bullets on what's well done (if anything genuinely is). Skip this section if nothing notable.
 
 ## Findings
-List findings grouped by severity. For each, include: file path, approximate line context, and the issue.
-If there are none at a severity, omit that subsection.
+Group by severity heading (### [BLOCKING], ### [WARN], ### [NIT]). For each finding:
+- **\`path/to/file.ext\`, line N** (or line range): one-sentence issue, then why it matters, then how to fix.
+Omit any severity section that has zero findings.
 
 ## Verdict
-End with EXACTLY one line in this format — nothing after it:
+End with EXACTLY one line, nothing after it:
 
-\`VERDICT: approve\` — no blocking issues, ready to merge.
+\`VERDICT: approve\` — no blocking issues.
 \`VERDICT: comment\` — has warnings/nits but nothing blocking.
 \`VERDICT: block\` — one or more BLOCKING issues.
 `;
@@ -40670,6 +40704,8 @@ async function run() {
     const skipForks = getBooleanInput('skip_forks');
     const bypassLabel = getInput('bypass_label');
     const statusContext = getInput('status_context');
+    const extraInstructions = getInput('extra_instructions');
+    const rulesFilePath = getInput('rules_file');
     const ctx = github_context;
     if (ctx.eventName !== 'pull_request' && ctx.eventName !== 'pull_request_target') {
         setFailed(`Unsupported event: ${ctx.eventName}. Use on: pull_request.`);
@@ -40719,6 +40755,23 @@ async function run() {
         mediaType: { format: 'diff' },
     });
     const diff = compare.data;
+    let rulesFromFile;
+    if (rulesFilePath) {
+        try {
+            const file = await octokit.rest.repos.getContent({
+                owner, repo, path: rulesFilePath, ref: pr.head.sha,
+            });
+            if ('content' in file.data && typeof file.data.content === 'string') {
+                rulesFromFile = Buffer.from(file.data.content, 'base64').toString('utf8');
+                info(`Loaded ${rulesFromFile.length} chars from ${rulesFilePath}`);
+            }
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (!msg.includes('404'))
+                warning(`Could not load ${rulesFilePath}: ${msg}`);
+        }
+    }
     const prompt = buildReviewPrompt({
         repoFullName: `${owner}/${repo}`,
         prNumber,
@@ -40727,6 +40780,8 @@ async function run() {
         baseBranch: pr.base.ref,
         headBranch: pr.head.ref,
         diff: truncateDiff(diff, 80_000),
+        extraInstructions: extraInstructions || undefined,
+        rulesFromFile,
     });
     const customJules = jules.with({ apiKey });
     info('Creating Jules review session…');
