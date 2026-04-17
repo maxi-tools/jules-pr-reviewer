@@ -40741,9 +40741,13 @@ async function run() {
     });
     const customJules = jules.with({ apiKey });
     info('Creating Jules review session…');
-    const session = await customJules.session({ prompt });
+    const session = await customJules.session({
+        prompt,
+        source: { github: `${owner}/${repo}`, baseBranch: pr.base.ref },
+    });
     info(`Jules session: ${session.id}`);
     await waitUntilSessionReady(session);
+    await waitUntilActivitiesReady(session);
     let reviewMessage = '';
     try {
         for await (const activity of session.stream({ initialRetries: 20 })) {
@@ -40783,6 +40787,28 @@ async function run() {
     if (state === 'failure') {
         setFailed(`Jules review verdict: ${verdict}`);
     }
+}
+async function waitUntilActivitiesReady(session) {
+    const maxAttempts = 30;
+    let delay = 3000;
+    for (let i = 0; i < maxAttempts; i++) {
+        try {
+            const count = await session.hydrate();
+            info(`Activities ready: ${count} activities pulled on attempt ${i + 1}.`);
+            return;
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (!msg.includes('404')) {
+                warning(`hydrate() threw non-404: ${msg}`);
+                return;
+            }
+            info(`Activities not yet available (attempt ${i + 1}/${maxAttempts})…`);
+            await new Promise(r => setTimeout(r, delay));
+            delay = Math.min(delay * 1.3, 15000);
+        }
+    }
+    warning('Activities readiness exhausted; trying to stream anyway.');
 }
 async function waitUntilSessionReady(session) {
     const maxAttempts = 20;

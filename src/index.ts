@@ -107,7 +107,7 @@ async function run(): Promise<void> {
   core.info(`Jules session: ${session.id}`);
 
   await waitUntilSessionReady(session);
-  await waitUntilActivitiesReady(session);
+  await waitUntilActivitiesReady(session as any);
 
   let reviewMessage = '';
   try {
