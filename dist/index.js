@@ -40743,9 +40743,10 @@ async function run() {
     info('Creating Jules review session…');
     const session = await customJules.session({ prompt });
     info(`Jules session: ${session.id}`);
+    await new Promise(r => setTimeout(r, 3000));
     let reviewMessage = '';
     try {
-        for await (const activity of session.stream()) {
+        for await (const activity of session.stream({ initialRetries: 20 })) {
             if (activity.type === 'agentMessaged') {
                 reviewMessage = activity.message;
                 info(`[agentMessaged] ${activity.message.slice(0, 120)}…`);

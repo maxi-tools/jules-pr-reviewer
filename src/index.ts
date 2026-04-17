@@ -107,7 +107,7 @@ async function run(): Promise<void> {
 
   let reviewMessage = '';
   try {
-    for await (const activity of session.stream({ initialRetries: 20 })) {
+    for await (const activity of session.stream({ initialRetries: 20 } as any)) {
       if (activity.type === 'agentMessaged') {
         reviewMessage = activity.message;
         core.info(`[agentMessaged] ${activity.message.slice(0, 120)}…`);
