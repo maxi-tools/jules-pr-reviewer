@@ -1,0 +1,39 @@
+name: 'Jules PR Reviewer'
+description: 'Review pull requests with Google Jules and post the review as a PR comment. Optionally gate merges based on review verdict.'
+author: 'sanjay3290'
+
+branding:
+  icon: 'check-circle'
+  color: 'purple'
+
+inputs:
+  jules_api_key:
+    description: 'Jules API key (create one at jules.google.com).'
+    required: true
+  github_token:
+    description: 'GitHub token with pull-requests:write and statuses:write. Usually ${{ secrets.GITHUB_TOKEN }}.'
+    required: true
+  fail_on:
+    description: 'When to fail the commit status check: never | blocking | any. Default blocking.'
+    required: false
+    default: 'blocking'
+  skip_drafts:
+    description: 'Skip review on draft PRs.'
+    required: false
+    default: 'true'
+  skip_forks:
+    description: 'Skip review on PRs from forks (prompt-injection risk).'
+    required: false
+    default: 'true'
+  bypass_label:
+    description: 'Label that, when applied to a PR, skips the review entirely.'
+    required: false
+    default: 'jules-override'
+  status_context:
+    description: 'Commit status context name.'
+    required: false
+    default: 'jules/review'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
