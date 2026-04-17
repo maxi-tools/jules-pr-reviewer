@@ -109,21 +109,28 @@ async function run(): Promise<void> {
   core.info(`Jules session: ${session.id}`);
 
   await waitUntilSessionReady(session);
-  await waitUntilActivitiesReady(session as any);
+
+  core.info('Waiting for session to complete…');
+  try {
+    const outcome = await session.result();
+    core.info(`Session completed: ${outcome.state}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    core.warning(`result() error: ${msg}`);
+  }
 
   let reviewMessage = '';
   try {
-    for await (const activity of session.stream({ initialRetries: 20 } as any)) {
+    await (session as any).hydrate();
+    for await (const activity of session.history()) {
       if (activity.type === 'agentMessaged') {
         reviewMessage = activity.message;
-        core.info(`[agentMessaged] ${activity.message.slice(0, 120)}…`);
-      } else if (activity.type === 'progressUpdated') {
-        core.info(`[progress] ${activity.title}`);
       }
     }
+    core.info(`Collected review (${reviewMessage.length} chars)`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    core.warning(`Stream error: ${msg}`);
+    core.warning(`history() error: ${msg}`);
   }
 
   if (!reviewMessage) {
@@ -154,28 +161,6 @@ async function run(): Promise<void> {
   if (state === 'failure') {
     core.setFailed(`Jules review verdict: ${verdict}`);
   }
-}
-
-async function waitUntilActivitiesReady(session: { id: string; hydrate: () => Promise<number> }): Promise<void> {
-  const maxAttempts = 30;
-  let delay = 3000;
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      const count = await session.hydrate();
-      core.info(`Activities ready: ${count} activities pulled on attempt ${i + 1}.`);
-      return;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes('404')) {
-        core.warning(`hydrate() threw non-404: ${msg}`);
-        return;
-      }
-      core.info(`Activities not yet available (attempt ${i + 1}/${maxAttempts})…`);
-      await new Promise(r => setTimeout(r, delay));
-      delay = Math.min(delay * 1.3, 15000);
-    }
-  }
-  core.warning('Activities readiness exhausted; trying to stream anyway.');
 }
 
 async function waitUntilSessionReady(session: { id: string; info: () => Promise<unknown> }): Promise<void> {

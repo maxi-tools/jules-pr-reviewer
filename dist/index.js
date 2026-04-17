@@ -40749,22 +40749,28 @@ async function run() {
     });
     info(`Jules session: ${session.id}`);
     await waitUntilSessionReady(session);
-    await waitUntilActivitiesReady(session);
-    let reviewMessage = '';
+    info('Waiting for session to complete…');
     try {
-        for await (const activity of session.stream({ initialRetries: 20 })) {
-            if (activity.type === 'agentMessaged') {
-                reviewMessage = activity.message;
-                info(`[agentMessaged] ${activity.message.slice(0, 120)}…`);
-            }
-            else if (activity.type === 'progressUpdated') {
-                info(`[progress] ${activity.title}`);
-            }
-        }
+        const outcome = await session.result();
+        info(`Session completed: ${outcome.state}`);
     }
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        warning(`Stream error: ${msg}`);
+        warning(`result() error: ${msg}`);
+    }
+    let reviewMessage = '';
+    try {
+        await session.hydrate();
+        for await (const activity of session.history()) {
+            if (activity.type === 'agentMessaged') {
+                reviewMessage = activity.message;
+            }
+        }
+        info(`Collected review (${reviewMessage.length} chars)`);
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warning(`history() error: ${msg}`);
     }
     if (!reviewMessage) {
         const failBody = `${IN_PROGRESS_MARKER}\n⚠️ **Jules did not return a review.** Session: \`${session.id}\`. Check Jules dashboard or re-run the workflow.`;
@@ -40789,28 +40795,6 @@ async function run() {
     if (state === 'failure') {
         setFailed(`Jules review verdict: ${verdict}`);
     }
-}
-async function waitUntilActivitiesReady(session) {
-    const maxAttempts = 30;
-    let delay = 3000;
-    for (let i = 0; i < maxAttempts; i++) {
-        try {
-            const count = await session.hydrate();
-            info(`Activities ready: ${count} activities pulled on attempt ${i + 1}.`);
-            return;
-        }
-        catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            if (!msg.includes('404')) {
-                warning(`hydrate() threw non-404: ${msg}`);
-                return;
-            }
-            info(`Activities not yet available (attempt ${i + 1}/${maxAttempts})…`);
-            await new Promise(r => setTimeout(r, delay));
-            delay = Math.min(delay * 1.3, 15000);
-        }
-    }
-    warning('Activities readiness exhausted; trying to stream anyway.');
 }
 async function waitUntilSessionReady(session) {
     const maxAttempts = 20;
