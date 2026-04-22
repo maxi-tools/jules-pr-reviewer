@@ -228,9 +228,16 @@ async function markCommentFailed(
   await octokit.rest.issues.updateComment({ owner, repo, comment_id: commentId, body });
 }
 
+// Match proper HTTP status codes only. `msg.includes('401')` would false-positive on
+// any error message that happens to contain the digits 401/403 as a substring — e.g.
+// a Jules session ID like `2076358440166838858` contains `401` at positions 10–12.
+function isAuthError(msg: string): boolean {
+  return /\b(?:401|403)\b/.test(msg);
+}
+
 function wrapPermissionError(err: unknown, needed: string, op: string): Error {
   const msg = err instanceof Error ? err.message : String(err);
-  if (msg.includes('403') || msg.includes('Resource not accessible')) {
+  if (isAuthError(msg) || msg.includes('Resource not accessible')) {
     return new Error(
       `${op} failed with 403. The github_token likely lacks ${needed}. Add to your workflow:\n` +
       `    permissions:\n      pull-requests: write\n      contents: read\n      statuses: write\n` +
@@ -261,7 +268,7 @@ async function pollForReview(
       core.info(`No agentMessaged yet (attempt ${attempt})…`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('401') || msg.includes('403')) {
+      if (isAuthError(msg)) {
         throw new Error(`Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`);
       }
       core.info(`hydrate/history error (attempt ${attempt}): ${msg}`);
@@ -281,7 +288,7 @@ async function waitUntilSessionReady(session: { id: string; info: () => Promise<
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('401') || msg.includes('403')) {
+      if (isAuthError(msg)) {
         throw new Error(`Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`);
       }
       if (!msg.includes('404')) {

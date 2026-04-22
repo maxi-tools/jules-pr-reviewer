@@ -40889,9 +40889,15 @@ async function markCommentFailed(octokit, owner, repo, commentId, reason) {
     const body = `${COMMENT_MARKER}\n⚠️ **Jules PR review failed to complete.**\n\n\`\`\`\n${truncate(reason, 500)}\n\`\`\`\n\nSee the [workflow logs](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}) for details.`;
     await octokit.rest.issues.updateComment({ owner, repo, comment_id: commentId, body });
 }
+// Match proper HTTP status codes only. `msg.includes('401')` would false-positive on
+// any error message that happens to contain the digits 401/403 as a substring — e.g.
+// a Jules session ID like `2076358440166838858` contains `401` at positions 10–12.
+function isAuthError(msg) {
+    return /\b(?:401|403)\b/.test(msg);
+}
 function wrapPermissionError(err, needed, op) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('403') || msg.includes('Resource not accessible')) {
+    if (isAuthError(msg) || msg.includes('Resource not accessible')) {
         return new Error(`${op} failed with 403. The github_token likely lacks ${needed}. Add to your workflow:\n` +
             `    permissions:\n      pull-requests: write\n      contents: read\n      statuses: write\n` +
             `(original: ${msg})`);
@@ -40918,7 +40924,7 @@ async function pollForReview(session, timeoutMs) {
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            if (msg.includes('401') || msg.includes('403')) {
+            if (isAuthError(msg)) {
                 throw new Error(`Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`);
             }
             info(`hydrate/history error (attempt ${attempt}): ${msg}`);
@@ -40938,7 +40944,7 @@ async function waitUntilSessionReady(session) {
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            if (msg.includes('401') || msg.includes('403')) {
+            if (isAuthError(msg)) {
                 throw new Error(`Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`);
             }
             if (!msg.includes('404')) {
