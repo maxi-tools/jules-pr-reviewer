@@ -26,6 +26,8 @@ async function run(): Promise<void> {
   const statusContext = core.getInput('status_context');
   const extraInstructions = core.getInput('extra_instructions');
   const rulesFilePath = core.getInput('rules_file');
+  const timeoutMinutesRaw = core.getInput('timeout_minutes') || '30';
+  const timeoutMinutes = Math.max(1, parseInt(timeoutMinutesRaw, 10) || 30);
 
   const ctx = github.context;
   if (ctx.eventName === 'pull_request_target') {
@@ -124,16 +126,18 @@ async function run(): Promise<void> {
 
     await waitUntilSessionReady(session);
 
-    const reviewMessage = await pollForReview(session as any, 15 * 60 * 1000);
+    const reviewMessage = await pollForReview(session as any, timeoutMinutes * 60 * 1000);
     core.info(`Collected review (${reviewMessage.length} chars)`);
 
     if (!reviewMessage) {
       await markCommentFailed(
         octokit, owner, repo, commentId,
-        `Jules did not return a review within 15 minutes. Session: \`${session.id}\`. Re-run the workflow or check the Jules dashboard.`,
+        `Jules did not return a review within ${timeoutMinutes} minutes. Session: \`${session.id}\`. ` +
+        `The session may still be running on Jules' side — check https://jules.google.com/session/${session.id}. ` +
+        `Consider raising the action's \`timeout_minutes\` input or re-running the workflow.`,
       );
-      await setStatus(octokit, owner, repo, headSha, statusContext, 'error', 'Jules did not return a review');
-      core.setFailed('Jules returned no review message.');
+      await setStatus(octokit, owner, repo, headSha, statusContext, 'error', 'Jules did not return a review in time');
+      core.setFailed(`Jules returned no review message within ${timeoutMinutes} minutes.`);
       return;
     }
 

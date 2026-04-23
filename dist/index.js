@@ -40725,6 +40725,8 @@ async function run() {
     const statusContext = getInput('status_context');
     const extraInstructions = getInput('extra_instructions');
     const rulesFilePath = getInput('rules_file');
+    const timeoutMinutesRaw = getInput('timeout_minutes') || '30';
+    const timeoutMinutes = Math.max(1, parseInt(timeoutMinutesRaw, 10) || 30);
     const ctx = github_context;
     if (ctx.eventName === 'pull_request_target') {
         setFailed('pull_request_target is not supported — it runs with base-repo write tokens and exposes the action to prompt-injection via attacker-controlled diffs. Use on: pull_request instead.');
@@ -40811,12 +40813,14 @@ async function run() {
         });
         info(`Jules session: ${session.id}`);
         await waitUntilSessionReady(session);
-        const reviewMessage = await pollForReview(session, 15 * 60 * 1000);
+        const reviewMessage = await pollForReview(session, timeoutMinutes * 60 * 1000);
         info(`Collected review (${reviewMessage.length} chars)`);
         if (!reviewMessage) {
-            await markCommentFailed(octokit, owner, repo, commentId, `Jules did not return a review within 15 minutes. Session: \`${session.id}\`. Re-run the workflow or check the Jules dashboard.`);
-            await setStatus(octokit, owner, repo, headSha, statusContext, 'error', 'Jules did not return a review');
-            setFailed('Jules returned no review message.');
+            await markCommentFailed(octokit, owner, repo, commentId, `Jules did not return a review within ${timeoutMinutes} minutes. Session: \`${session.id}\`. ` +
+                `The session may still be running on Jules' side — check https://jules.google.com/session/${session.id}. ` +
+                `Consider raising the action's \`timeout_minutes\` input or re-running the workflow.`);
+            await setStatus(octokit, owner, repo, headSha, statusContext, 'error', 'Jules did not return a review in time');
+            setFailed(`Jules returned no review message within ${timeoutMinutes} minutes.`);
             return;
         }
         const verdict = parseVerdict(reviewMessage);
