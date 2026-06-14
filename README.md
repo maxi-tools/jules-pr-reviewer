@@ -2,7 +2,7 @@
 
 A GitHub Action that uses [Google Jules](https://jules.google) (Gemini-powered cloud coding agent) to review pull requests and post the review as a PR comment. Optionally gates merges via a commit status check.
 
-*Special thanks to [@sanjay3290](https://github.com/sanjay3290) for the original work in the base action*
+_Special thanks to [@sanjay3290](https://github.com/sanjay3290) for the original work in the base action_
 
 - Works on any language / framework — Jules is general-purpose.
 - Low noise by default: aggressive false-positive filter baked into the prompt.
@@ -16,17 +16,21 @@ A GitHub Action that uses [Google Jules](https://jules.google) (Gemini-powered c
 Instead of a single monolithic comment, Jules leaves **inline, line-level comments** on the PR:
 
 **On `src/db.js`, line 4:**
+
 > <!-- jules-inline-comment -->
+>
 > **Severity:** 🚨 High | **Confidence:** 🟢 High
-> 
+>
 > SQL injection — the id parameter is interpolated into the query. Use parameterized queries.
 
 It will also post a general summary as a standard PR comment:
+
 > ## 🤖 Jules Review
-> 
+>
 > Adds a /user lookup endpoint and an /admin check. Three critical security flaws need fixing before merge.
-> 
+>
 > ---
+>
 > _Session: `...`_
 
 ## Setup
@@ -108,14 +112,17 @@ Best when rules are long, evolving, or shared across workflows. Default path: `.
 # Review rules for my-org/my-repo
 
 ## Always blocking
+
 - Direct writes to `users.balance` without going through `account-service`.
 - Any usage of `eval`, `Function(...)`, or `child_process.exec` with user input.
 
 ## Framework conventions
+
 - React components must be functional (no class components).
 - All API handlers must be wrapped in `withAuth()`.
 
 ## What to skip
+
 - Tests are linted separately — don't review test files.
 ```
 
@@ -127,18 +134,18 @@ The workflow's `extra_instructions` is appended after the rules file content. Us
 
 ## Inputs
 
-| Input | Default | Description |
-|---|---|---|
-| `jules_api_key` | — | **Required.** Key from jules.google.com. |
-| `github_token` | — | **Required.** `${{ secrets.GITHUB_TOKEN }}`. |
-| `fail_on` | `blocking` | `never` \| `blocking` \| `any`. Controls commit-status state. |
-| `skip_drafts` | `true` | Skip review on draft PRs. |
-| `skip_forks` | `true` | Skip PRs from forks (diff can contain prompt-injection payloads). |
-| `bypass_label` | `jules-override` | If the PR has this label, skip the review. |
-| `status_context` | `jules/review` | Commit status context name. |
-| `extra_instructions` | `''` | Markdown appended to the prompt. |
-| `rules_file` | `.github/jules-review-rules.md` | Path in repo to load as extra rules. Set empty to disable. |
-| `timeout_minutes` | `30` | How long to wait for Jules to return a review. |
+| Input                | Default                         | Description                                                       |
+| -------------------- | ------------------------------- | ----------------------------------------------------------------- |
+| `jules_api_key`      | —                               | **Required.** Key from jules.google.com.                          |
+| `github_token`       | —                               | **Required.** `${{ secrets.GITHUB_TOKEN }}`.                      |
+| `fail_on`            | `blocking`                      | `never` \| `blocking` \| `any`. Controls commit-status state.     |
+| `skip_drafts`        | `true`                          | Skip review on draft PRs.                                         |
+| `skip_forks`         | `true`                          | Skip PRs from forks (diff can contain prompt-injection payloads). |
+| `bypass_label`       | `jules-override`                | If the PR has this label, skip the review.                        |
+| `status_context`     | `jules/review`                  | Commit status context name.                                       |
+| `extra_instructions` | `''`                            | Markdown appended to the prompt.                                  |
+| `rules_file`         | `.github/jules-review-rules.md` | Path in repo to load as extra rules. Set empty to disable.        |
+| `timeout_minutes`    | `30`                            | How long to wait for Jules to return a review.                    |
 
 ## Severity, Confidence, & Verdict
 
@@ -156,25 +163,25 @@ Jules is instructed to return structured JSON data that parses each finding into
 
 Jules also generates a summary and a final verdict line:
 
-| Verdict | Meaning |
-|---|---|
-| `approve` | No blocking issues. |
-| `comment` | Warnings or infos only. |
-| `block` | One or more high severity issues. |
+| Verdict   | Meaning                           |
+| --------- | --------------------------------- |
+| `approve` | No blocking issues.               |
+| `comment` | Warnings or infos only.           |
+| `block`   | One or more high severity issues. |
 
 `fail_on` maps verdict → status:
 
-| `fail_on` | approve | comment | block |
-|---|---|---|---|
-| `never` | success | success | success |
-| `blocking` *(default)* | success | success | **failure** |
-| `any` | success | **failure** | **failure** |
+| `fail_on`              | approve | comment     | block       |
+| ---------------------- | ------- | ----------- | ----------- |
+| `never`                | success | success     | success     |
+| `blocking` _(default)_ | success | success     | **failure** |
+| `any`                  | success | **failure** | **failure** |
 
 The **workflow job itself always passes** if the action ran successfully — the status check is what gates merge. Job failures indicate the action broke, not that the review found issues.
 
 ## Inner Workings & Architecture
 
-Behind the scenes, this action works by compiling a prompt combining the PR details, the incremental or full diff, your custom instructions, and a strict JSON schema requirement. 
+Behind the scenes, this action works by compiling a prompt combining the PR details, the incremental or full diff, your custom instructions, and a strict JSON schema requirement.
 
 - **Incremental Diffing**: On `synchronize` events, the action only pulls the diff between the previous state and the new state, rather than fetching the entire PR diff. This prevents repeating comments on untouched code and speeds up the review process.
 - **Auto-Resolving Threads**: The action fetches open PR review threads and includes them in the prompt. If Jules determines that a new commit fixes the issue raised in a comment, it signals the action to automatically mark the GitHub conversation thread as **resolved**.
@@ -185,9 +192,9 @@ Behind the scenes, this action works by compiling a prompt combining the PR deta
 Your repo must be connected to your Jules account. After authenticating at jules.google.com with GitHub, the repos you authorize become available as sources. To verify, create a file `list-sources.mjs`:
 
 ```js
-import { jules } from '@google/jules-sdk';
+import { jules } from "@google/jules-sdk";
 for await (const s of jules.sources()) {
-  if (s.type === 'githubRepo') {
+  if (s.type === "githubRepo") {
     console.log(`${s.githubRepo.owner}/${s.githubRepo.repo}`);
   }
 }
@@ -215,11 +222,13 @@ Then run: `JULES_API_KEY=... node list-sources.mjs`
 This action uses `pnpm` for package management.
 
 To install dependencies:
+
 ```bash
 pnpm install
 ```
 
 To build the action into the `dist` folder:
+
 ```bash
 pnpm run build
 ```

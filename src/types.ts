@@ -1,5 +1,5 @@
-export type FailOn = 'never' | 'blocking' | 'any';
-export type Verdict = 'approve' | 'comment' | 'block';
+export type FailOn = "never" | "blocking" | "any";
+export type Verdict = "approve" | "comment" | "block";
 
 export interface OpenThread {
   index: number;
@@ -24,8 +24,8 @@ export interface PromptArgs {
 export interface ReviewComment {
   file: string;
   line: number;
-  severity: 'Info' | 'Warning' | 'High';
-  confidence: 'Low' | 'Medium' | 'High';
+  severity: "Info" | "Warning" | "High";
+  confidence: "Low" | "Medium" | "High";
   message: string;
 }
 

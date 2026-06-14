@@ -5,8 +5,9 @@ import { ReviewResult } from "./types.js";
 export async function runJulesReview(
   apiKey: string,
   prompt: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   source: any,
-  timeoutMinutes: number,
+  timeoutMinutes: number
 ): Promise<{ reviewResult: ReviewResult | null; sessionId: string }> {
   const customJules = jules.with({ apiKey });
 
@@ -23,8 +24,9 @@ export async function runJulesReview(
   await waitUntilSessionReady(session);
 
   const reviewMessage = await pollForReview(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     session as any,
-    timeoutMinutes * 60 * 1000,
+    timeoutMinutes * 60 * 1000
   );
   core.info(`Collected review (${reviewMessage.length} chars)`);
 
@@ -48,7 +50,7 @@ function parseJulesResponse(message: string): ReviewResult {
   if (jsonMatch) {
     try {
       return JSON.parse(jsonMatch[1]) as ReviewResult;
-    } catch (e) {
+    } catch {
       // fallback
     }
   }
@@ -56,7 +58,7 @@ function parseJulesResponse(message: string): ReviewResult {
   try {
     return JSON.parse(message) as ReviewResult;
   } catch (e) {
-    throw new Error("Failed to parse Jules response as JSON");
+    throw new Error("Failed to parse Jules response as JSON", { cause: e });
   }
 }
 
@@ -76,10 +78,11 @@ async function waitUntilSessionReady(session: {
       if (isAuthError(msg)) {
         throw new Error(
           `Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`,
+          { cause: err }
         );
       }
       if (!msg.includes("404")) {
-        throw new Error(`Jules session.info() failed: ${msg}`);
+        throw new Error(`Jules session.info() failed: ${msg}`, { cause: err });
       }
       core.info(`Session not yet ready (attempt ${i + 1}/${maxAttempts})…`);
       await new Promise((r) => setTimeout(r, delay));
@@ -93,9 +96,10 @@ async function pollForReview(
   session: {
     id: string;
     hydrate: () => Promise<number>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     history: () => AsyncIterable<any>;
   },
-  timeoutMs: number,
+  timeoutMs: number
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   let attempt = 0;
@@ -117,6 +121,7 @@ async function pollForReview(
       if (isAuthError(msg)) {
         throw new Error(
           `Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`,
+          { cause: err }
         );
       }
       core.info(`hydrate/history error (attempt ${attempt}): ${msg}`);
@@ -133,14 +138,14 @@ export function isAuthError(msg: string): boolean {
 export function wrapPermissionError(
   err: unknown,
   needed: string,
-  op: string,
+  op: string
 ): Error {
   const msg = err instanceof Error ? err.message : String(err);
   if (isAuthError(msg) || msg.includes("Resource not accessible")) {
     return new Error(
       `${op} failed with 403. The github_token likely lacks ${needed}. Add to your workflow:\n` +
-        `    permissions:\n      pull-requests: write\n      contents: read\n      statuses: write\n` +
-        `(original: ${msg})`,
+        "    permissions:\n      pull-requests: write\n      contents: read\n      statuses: write\n" +
+        `(original: ${msg})`
     );
   }
   return err instanceof Error ? err : new Error(msg);

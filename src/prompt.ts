@@ -1,20 +1,26 @@
-import { PromptArgs } from './types.js';
+import { PromptArgs } from "./types.js";
 
 export function buildReviewPrompt(args: PromptArgs): string {
   const {
-    repoFullName, prNumber, prTitle, prBody, diff,
-    diffTruncatedNote, extraInstructions, rulesFromFile,
-    openThreads
+    repoFullName,
+    prNumber,
+    prTitle,
+    prBody,
+    diff,
+    diffTruncatedNote,
+    extraInstructions,
+    rulesFromFile,
+    openThreads,
   } = args;
 
-  let threadsContext = '';
+  let threadsContext = "";
   if (openThreads && openThreads.length > 0) {
     threadsContext = `
 # Open Review Comments
 Here are previous review comments made by you that are still unresolved.
 Evaluate if the current diff addresses them. If they are addressed and fixed, include their index in \`resolvedCommentIds\`.
 
-${openThreads.map(t => `[Index ${t.index}] File: ${t.path}, Line: ${t.line}\nComment: ${t.body}`).join('\n\n')}
+${openThreads.map((t) => `[Index ${t.index}] File: ${t.path}, Line: ${t.line}\nComment: ${t.body}`).join("\n\n")}
 `;
   }
 
@@ -32,20 +38,28 @@ ${repoFullName} (PR #${prNumber})
 ${prTitle}
 
 # UNTRUSTED: PR description
-${prBody || '(no description)'}
+${prBody || "(no description)"}
 
 # UNTRUSTED: Incremental Diff to Review
-${diffTruncatedNote ? `NOTE: ${diffTruncatedNote}\n` : ''}
+${diffTruncatedNote ? `NOTE: ${diffTruncatedNote}\n` : ""}
 \`\`\`diff
 ${diff}
 \`\`\`
-${rulesFromFile ? `
+${
+  rulesFromFile
+    ? `
 # UNTRUSTED: Project-specific rules
 ${rulesFromFile}
-` : ''}${extraInstructions ? `
+`
+    : ""
+}${
+    extraInstructions
+      ? `
 # Trusted: Additional instructions
 ${extraInstructions}
-` : ''}
+`
+      : ""
+  }
 ${threadsContext}
 
 # What to review

@@ -210,7 +210,13 @@
 <a name='L145'></a><a href='#L145'>145</a>
 <a name='L146'></a><a href='#L146'>146</a>
 <a name='L147'></a><a href='#L147'>147</a>
-<a name='L148'></a><a href='#L148'>148</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -235,6 +241,7 @@
 <span class="cline-any cline-yes">11x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -290,6 +297,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">22x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -299,6 +307,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">21x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -328,6 +337,7 @@
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -364,8 +374,9 @@ import { ReviewResult } from "./types.js";
 export async function runJulesReview(
   apiKey: string,
   prompt: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   source: any,
-  timeoutMinutes: number,
+  timeoutMinutes: number
 ): Promise&lt;{ reviewResult: ReviewResult | null; sessionId: string }&gt; {
   const customJules = jules.with({ apiKey });
 &nbsp;
@@ -382,8 +393,9 @@ export async function runJulesReview(
   await waitUntilSessionReady(session);
 &nbsp;
   const reviewMessage = await pollForReview(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     session as any,
-    timeoutMinutes * 60 * 1000,
+    timeoutMinutes * 60 * 1000
   );
   core.info(`Collected review (${reviewMessage.length} chars)`);
 &nbsp;
@@ -407,7 +419,7 @@ function parseJulesResponse(message: string): ReviewResult {
   if (jsonMatch) {
     try {
       return JSON.parse(jsonMatch[1]) as ReviewResult;
-    } catch (e) {
+    } catch {
       // fallback
     }
   }
@@ -415,7 +427,7 @@ function parseJulesResponse(message: string): ReviewResult {
   try {
     return JSON.parse(message) as ReviewResult;
   } catch (e) {
-    throw new Error("Failed to parse Jules response as JSON");
+    throw new Error("Failed to parse Jules response as JSON", { cause: e });
   }
 }
 &nbsp;
@@ -435,10 +447,11 @@ async function waitUntilSessionReady(session: {
       if (isAuthError(msg)) {
         throw new Error(
           `Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`,
+          { cause: err }
         );
       }
       if (!msg.includes("404")) {
-        throw new Error(`Jules session.info() failed: ${msg}`);
+        throw new Error(`Jules session.info() failed: ${msg}`, { cause: err });
       }
       core.info(`Session not yet ready (attempt ${i + 1}/${maxAttempts})…`);
       await new Promise((r) =&gt; setTimeout(r, delay));
@@ -452,9 +465,10 @@ async function pollForReview(
   session: {
     id: string;
     hydrate: () =&gt; Promise&lt;number&gt;;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     history: () =&gt; AsyncIterable&lt;any&gt;;
   },
-  timeoutMs: number,
+  timeoutMs: number
 ): Promise&lt;string&gt; {
   const deadline = Date.now() + timeoutMs;
   let attempt = 0;
@@ -476,6 +490,7 @@ async function pollForReview(
       if (isAuthError(msg)) {
         throw new Error(
           `Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`,
+          { cause: err }
         );
       }
       core.info(`hydrate/history error (attempt ${attempt}): ${msg}`);
@@ -492,14 +507,14 @@ export function isAuthError(msg: string): boolean {
 export function wrapPermissionError(
   err: unknown,
   needed: string,
-  op: string,
+  op: string
 ): Error {
   const msg = err instanceof Error ? err.message : String(err);
   if (isAuthError(msg) || msg.includes("Resource not accessible")) {
     return new Error(
       `${op} failed with 403. The github_token likely lacks ${needed}. Add to your workflow:\n` +
-        `    permissions:\n      pull-requests: write\n      contents: read\n      statuses: write\n` +
-        `(original: ${msg})`,
+        "    permissions:\n      pull-requests: write\n      contents: read\n      statuses: write\n" +
+        `(original: ${msg})`
     );
   }
   return err instanceof Error ? err : new Error(msg);
@@ -511,7 +526,7 @@ export function wrapPermissionError(
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-06-14T20:23:56.242Z
+                at 2026-06-14T20:31:47.204Z
             </div>
         <script src="prettify.js"></script>
         <script>
