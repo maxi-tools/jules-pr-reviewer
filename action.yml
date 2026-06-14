@@ -1,6 +1,6 @@
 name: "Advanced Jules PR Reviewer"
 description: "Review pull requests with Google Jules and post the review as a PR comment. Optionally gate merges based on review verdict."
-author: "sanjay3290"
+author: "thalesraymond"
 
 branding:
   icon: "check-circle"

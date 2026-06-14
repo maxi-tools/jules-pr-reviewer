@@ -63,7 +63,7 @@ jobs:
       contents: read
       statuses: write
     steps:
-      - uses: sanjay3290/jules-pr-reviewer@v1
+      - uses: thalesraymond/jules-pr-reviewer@v1
         with:
           jules_api_key: ${{ secrets.JULES_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -86,7 +86,7 @@ Three ways to shape what Jules looks for (most → least common):
 Best for quick tweaks or project-level rules.
 
 ```yaml
-- uses: sanjay3290/jules-pr-reviewer@v1
+- uses: thalesraymond/jules-pr-reviewer@v1
   with:
     jules_api_key: ${{ secrets.JULES_API_KEY }}
     github_token: ${{ secrets.GITHUB_TOKEN }}
