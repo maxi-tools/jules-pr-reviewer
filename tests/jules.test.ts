@@ -108,7 +108,13 @@ describe("jules.ts", () => {
 
       const result = await runJulesReview("api-key", "prompt", {}, 1);
       expect(result).toEqual({
-        reviewResult: null,
+        reviewResult: {
+          summary:
+            "Jules returned an invalid response that could not be parsed. No valid code review comments are present.",
+          verdict: "comment",
+          resolvedCommentIds: [],
+          newComments: [],
+        },
         sessionId: "test-session-id",
       });
       expect(core.error).toHaveBeenCalled();
@@ -129,7 +135,13 @@ describe("jules.ts", () => {
 
       const result = await runJulesReview("api-key", "prompt", {}, 1);
       expect(result).toEqual({
-        reviewResult: null,
+        reviewResult: {
+          summary:
+            "Jules returned an invalid response that could not be parsed. No valid code review comments are present.",
+          verdict: "comment",
+          resolvedCommentIds: [],
+          newComments: [],
+        },
         sessionId: "test-session-id",
       });
       expect(core.error).toHaveBeenCalled();

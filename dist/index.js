@@ -40800,7 +40800,15 @@ source, timeoutMinutes) {
     }
     catch (err) {
         error(`Failed to parse Jules response: ${err}`);
-        return { reviewResult: null, sessionId: session.id };
+        return {
+            reviewResult: {
+                summary: "Jules returned an invalid response that could not be parsed. No valid code review comments are present.",
+                verdict: "comment",
+                resolvedCommentIds: [],
+                newComments: [],
+            },
+            sessionId: session.id,
+        };
     }
     return { reviewResult, sessionId: session.id };
 }
