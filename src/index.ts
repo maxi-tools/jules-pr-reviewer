@@ -1,10 +1,9 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
-import { jules } from '@google/jules-sdk';
+import { FailOn, Verdict, OpenThread } from './types.js';
+import { fetchDiff, loadRulesFromBase, fetchOpenThreads, resolveThreads, submitReview, setStatus } from './github.js';
+import { runJulesReview, wrapPermissionError } from './jules.js';
 import { buildReviewPrompt } from './prompt.js';
-
-type FailOn = 'never' | 'blocking' | 'any';
-type Verdict = 'approve' | 'comment' | 'block';
 
 const COMMENT_MARKER = '<!-- jules-pr-reviewer -->';
 const VALID_FAIL_ON: FailOn[] = ['never', 'blocking', 'any'];
@@ -65,33 +64,23 @@ async function run(): Promise<void> {
     return;
   }
 
-  let commentId: number | undefined;
-
   try {
     try {
-      await octokit.rest.repos.createCommitStatus({
-        owner, repo, sha: headSha, state: 'pending', context: statusContext,
-        description: 'Jules is reviewing this PR…',
-      });
+      await setStatus(octokit, owner, repo, headSha, statusContext, 'pending', 'Jules is reviewing this PR…');
     } catch (err) {
       throw wrapPermissionError(err, 'statuses:write', 'createCommitStatus');
     }
 
-    const inProgressBody =
-      `${COMMENT_MARKER}\n🤖 **Jules is reviewing this PR.** Results will appear here shortly (typically 2–5 minutes).`;
-
-    let createdId: number;
-    try {
-      const created = await octokit.rest.issues.createComment({
-        owner, repo, issue_number: prNumber, body: inProgressBody,
-      });
-      createdId = created.data.id;
-    } catch (err) {
-      throw wrapPermissionError(err, 'pull-requests:write', 'createComment');
+    // Determine the base SHA for incremental diffing
+    let baseShaForDiff = baseSha;
+    if (ctx.payload.action === 'synchronize' && ctx.payload.before) {
+      baseShaForDiff = ctx.payload.before;
+      core.info(`Synchronize event detected. Reviewing incremental changes from ${baseShaForDiff} to ${headSha}`);
+    } else {
+      core.info(`Reviewing full PR diff from ${baseShaForDiff} to ${headSha}`);
     }
-    commentId = createdId;
 
-    const diff = await fetchDiff(octokit, owner, repo, pr);
+    const diff = await fetchDiff(octokit, owner, repo, pr, baseShaForDiff, headSha);
 
     let rulesFromFile: string | undefined;
     if (rulesFilePath) {
@@ -100,52 +89,47 @@ async function run(): Promise<void> {
 
     const { text: diffText, truncatedNote } = truncateDiff(diff, 80_000);
 
+    const openThreads = await fetchOpenThreads(octokit, owner, repo, prNumber);
+
     const prompt = buildReviewPrompt({
       repoFullName: `${owner}/${repo}`,
       prNumber,
       prTitle: pr.title || '',
       prBody: pr.body || '',
-      baseBranch: pr.base.ref,
-      headBranch: pr.head.ref,
       diff: diffText,
       diffTruncatedNote: truncatedNote,
       extraInstructions: extraInstructions || undefined,
       rulesFromFile,
+      openThreads
     });
 
-    const customJules = jules.with({ apiKey });
+    const { reviewResult, sessionId } = await runJulesReview(
+      apiKey, prompt, { github: `${owner}/${repo}`, baseBranch: pr.base.ref }, timeoutMinutes
+    );
 
-    core.info('Creating Jules review session…');
-    const session = await customJules.session({
-      prompt,
-      source: { github: `${owner}/${repo}`, baseBranch: pr.base.ref },
-      requireApproval: false,
-      autoPr: false,
-    });
-    core.info(`Jules session: ${session.id}`);
-
-    await waitUntilSessionReady(session);
-
-    const reviewMessage = await pollForReview(session as any, timeoutMinutes * 60 * 1000);
-    core.info(`Collected review (${reviewMessage.length} chars)`);
-
-    if (!reviewMessage) {
-      await markCommentFailed(
-        octokit, owner, repo, commentId,
-        `Jules did not return a review within ${timeoutMinutes} minutes. Session: \`${session.id}\`. ` +
-        `The session may still be running on Jules' side — check https://jules.google.com/session/${session.id}. ` +
-        `Consider raising the action's \`timeout_minutes\` input or re-running the workflow.`,
-      );
-      await setStatus(octokit, owner, repo, headSha, statusContext, 'error', 'Jules did not return a review in time');
+    if (!reviewResult) {
+      await setStatus(octokit, owner, repo, headSha, statusContext, 'error', 'Jules did not return a valid review in time');
       core.setFailed(`Jules returned no review message within ${timeoutMinutes} minutes.`);
       return;
     }
 
-    const verdict = parseVerdict(reviewMessage);
+    const { verdict, summary, resolvedCommentIds, newComments } = reviewResult;
 
-    const finalBody =
-      `${COMMENT_MARKER}\n## 🤖 Jules Review\n\n${reviewMessage}\n\n---\n_Session: \`${session.id}\`_`;
-    await octokit.rest.issues.updateComment({ owner, repo, comment_id: commentId, body: finalBody });
+    // Resolve threads that the LLM identified as fixed
+    if (resolvedCommentIds && resolvedCommentIds.length > 0) {
+      const threadIdsToResolve = openThreads
+        .filter(t => resolvedCommentIds.includes(t.index))
+        .map(t => t.threadId);
+      
+      if (threadIdsToResolve.length > 0) {
+        await resolveThreads(octokit, threadIdsToResolve);
+      }
+    }
+
+    // Prepare body for the PR review
+    const finalBody = `${COMMENT_MARKER}\n## 🤖 Jules Review\n\n${summary}\n\n---\n_Session: \`${sessionId}\`_`;
+
+    await submitReview(octokit, owner, repo, prNumber, headSha, finalBody, newComments || []);
 
     const { state, description } = statusFromVerdict(verdict, failOn);
     await setStatus(octokit, owner, repo, headSha, statusContext, state, description);
@@ -155,155 +139,9 @@ async function run(): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     core.error(`Review failed: ${msg}`);
 
-    if (commentId !== undefined) {
-      await markCommentFailed(octokit, owner, repo, commentId, msg).catch(() => {});
-    }
-    await setStatus(octokit, owner, repo, headSha, statusContext, 'error', truncate(msg, 140))
-      .catch(() => {});
+    await setStatus(octokit, owner, repo, headSha, statusContext, 'error', truncate(msg, 140)).catch(() => {});
     core.setFailed(`Jules PR review failed: ${msg}`);
   }
-}
-
-async function fetchDiff(
-  octokit: ReturnType<typeof github.getOctokit>,
-  owner: string, repo: string, pr: any,
-): Promise<string> {
-  try {
-    const res = await octokit.rest.pulls.get({
-      owner, repo, pull_number: pr.number, mediaType: { format: 'diff' },
-    });
-    const data = res.data as unknown;
-    if (typeof data === 'string') return data;
-  } catch (err) {
-    core.warning(`pulls.get diff failed, falling back to compare: ${String(err)}`);
-  }
-  const compare = await octokit.rest.repos.compareCommitsWithBasehead({
-    owner, repo,
-    basehead: `${pr.base.sha}...${pr.head.sha}`,
-    mediaType: { format: 'diff' },
-  });
-  const data = compare.data as unknown;
-  if (typeof data !== 'string') {
-    throw new Error(
-      'GitHub returned no diff text (PR may be too large or comparison refused). ' +
-      'Action cannot review this PR.',
-    );
-  }
-  return data;
-}
-
-async function loadRulesFromBase(
-  octokit: ReturnType<typeof github.getOctokit>,
-  owner: string, repo: string, path: string, baseSha: string,
-): Promise<string | undefined> {
-  try {
-    const file = await octokit.rest.repos.getContent({ owner, repo, path, ref: baseSha });
-    if ('content' in file.data && typeof file.data.content === 'string') {
-      const content = Buffer.from(file.data.content, 'base64').toString('utf8');
-      core.info(`Loaded ${content.length} chars from ${path} at base SHA`);
-      return content;
-    }
-    core.warning(`${path} is not a regular file.`);
-    return undefined;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('404') || msg.includes('Not Found')) return undefined;
-    core.warning(`Could not load ${path} at base SHA: ${msg}`);
-    return undefined;
-  }
-}
-
-async function setStatus(
-  octokit: ReturnType<typeof github.getOctokit>,
-  owner: string, repo: string, sha: string, context: string,
-  state: 'pending' | 'success' | 'failure' | 'error',
-  description: string,
-): Promise<void> {
-  await octokit.rest.repos.createCommitStatus({
-    owner, repo, sha, state, context, description,
-  });
-}
-
-async function markCommentFailed(
-  octokit: ReturnType<typeof github.getOctokit>,
-  owner: string, repo: string, commentId: number, reason: string,
-): Promise<void> {
-  const body = `${COMMENT_MARKER}\n⚠️ **Jules PR review failed to complete.**\n\n\`\`\`\n${truncate(reason, 500)}\n\`\`\`\n\nSee the [workflow logs](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}) for details.`;
-  await octokit.rest.issues.updateComment({ owner, repo, comment_id: commentId, body });
-}
-
-// Match proper HTTP status codes only. `msg.includes('401')` would false-positive on
-// any error message that happens to contain the digits 401/403 as a substring — e.g.
-// a Jules session ID like `2076358440166838858` contains `401` at positions 10–12.
-function isAuthError(msg: string): boolean {
-  return /\b(?:401|403)\b/.test(msg);
-}
-
-function wrapPermissionError(err: unknown, needed: string, op: string): Error {
-  const msg = err instanceof Error ? err.message : String(err);
-  if (isAuthError(msg) || msg.includes('Resource not accessible')) {
-    return new Error(
-      `${op} failed with 403. The github_token likely lacks ${needed}. Add to your workflow:\n` +
-      `    permissions:\n      pull-requests: write\n      contents: read\n      statuses: write\n` +
-      `(original: ${msg})`,
-    );
-  }
-  return err instanceof Error ? err : new Error(msg);
-}
-
-async function pollForReview(
-  session: { id: string; hydrate: () => Promise<number>; history: () => AsyncIterable<any> },
-  timeoutMs: number,
-): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  let attempt = 0;
-  while (Date.now() < deadline) {
-    attempt++;
-    try {
-      await session.hydrate();
-      let last = '';
-      for await (const a of session.history()) {
-        if (a.type === 'agentMessaged') last = a.message;
-      }
-      if (last) {
-        core.info(`Got agentMessaged on attempt ${attempt}.`);
-        return last;
-      }
-      core.info(`No agentMessaged yet (attempt ${attempt})…`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (isAuthError(msg)) {
-        throw new Error(`Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`);
-      }
-      core.info(`hydrate/history error (attempt ${attempt}): ${msg}`);
-    }
-    await new Promise(r => setTimeout(r, 20_000));
-  }
-  return '';
-}
-
-async function waitUntilSessionReady(session: { id: string; info: () => Promise<unknown> }): Promise<void> {
-  const maxAttempts = 20;
-  let delay = 2000;
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      await session.info();
-      core.info(`Session ${session.id} is ready after ${i + 1} attempt(s).`);
-      return;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (isAuthError(msg)) {
-        throw new Error(`Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`);
-      }
-      if (!msg.includes('404')) {
-        throw new Error(`Jules session.info() failed: ${msg}`);
-      }
-      core.info(`Session not yet ready (attempt ${i + 1}/${maxAttempts})…`);
-      await new Promise(r => setTimeout(r, delay));
-      delay = Math.min(delay * 1.5, 15000);
-    }
-  }
-  throw new Error('Session did not become ready within timeout.');
 }
 
 function truncateDiff(diff: string, maxChars: number): { text: string; truncatedNote?: string } {
@@ -317,13 +155,6 @@ function truncateDiff(diff: string, maxChars: number): { text: string; truncated
 
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 1) + '…';
-}
-
-function parseVerdict(message: string): Verdict {
-  const match = message.match(/VERDICT:\s*(approve|comment|block)/i);
-  if (match) return match[1].toLowerCase() as Verdict;
-  if (/\[BLOCKING\]/.test(message)) return 'block';
-  return 'comment';
 }
 
 function statusFromVerdict(
