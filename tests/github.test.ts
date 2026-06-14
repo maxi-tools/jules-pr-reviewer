@@ -271,6 +271,7 @@ describe("github.ts", () => {
         severity: "High",
         confidence: "High",
         message: "Msg",
+        promptForAgents: "Fix this issue by doing X",
       },
       {
         file: "b.ts",
@@ -278,6 +279,7 @@ describe("github.ts", () => {
         severity: "Warning",
         confidence: "Medium",
         message: "Msg2",
+        promptForAgents: "",
       },
       {
         file: "c.ts",
@@ -285,6 +287,7 @@ describe("github.ts", () => {
         severity: "Info",
         confidence: "Low",
         message: "Msg3",
+        promptForAgents: undefined as any,
       },
     ]);
 
@@ -300,7 +303,7 @@ describe("github.ts", () => {
           path: "a.ts",
           line: 10,
           side: "RIGHT",
-          body: "<!-- jules-inline-comment -->\n**Severity:** 🚨 High | **Confidence:** 🟢 High\n\nMsg",
+          body: "<!-- jules-inline-comment -->\n**Severity:** 🚨 High | **Confidence:** 🟢 High\n\nMsg\n\n<details>\n<summary>🤖 Prompt for Agents</summary>\n\nFix this issue by doing X\n</details>",
         },
         {
           path: "b.ts",

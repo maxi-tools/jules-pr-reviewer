@@ -27,6 +27,7 @@ export interface ReviewComment {
   severity: "Info" | "Warning" | "High";
   confidence: "Low" | "Medium" | "High";
   message: string;
+  promptForAgents: string;
 }
 
 export interface ReviewResult {

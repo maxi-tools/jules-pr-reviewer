@@ -36374,14 +36374,24 @@ async function submitReview(octokit, owner, repo, prNumber, headSha, summary, co
     const formattedComments = comments.map((c) => {
         const severityEmoji = c.severity === "High" ? "🚨" : c.severity === "Warning" ? "⚠️" : "ℹ️";
         const confidenceEmoji = c.confidence === "High" ? "🟢" : c.confidence === "Medium" ? "🟡" : "🔴";
+        let body = `<!-- jules-inline-comment -->
+**Severity:** ${severityEmoji} ${c.severity} | **Confidence:** ${confidenceEmoji} ${c.confidence}
+
+${c.message}`;
+        if (c.promptForAgents) {
+            body += `
+
+<details>
+<summary>🤖 Prompt for Agents</summary>
+
+${c.promptForAgents}
+</details>`;
+        }
         return {
             path: c.file,
             line: c.line,
             side: "RIGHT",
-            body: `<!-- jules-inline-comment -->
-**Severity:** ${severityEmoji} ${c.severity} | **Confidence:** ${confidenceEmoji} ${c.confidence}
-
-${c.message}`,
+            body,
         };
     });
     await octokit.rest.pulls.createReview({
@@ -40955,7 +40965,8 @@ You MUST output your review as a JSON object, wrapped in a \`\`\`json block. Do 
       "line": 42,
       "severity": "Info|Warning|High",
       "confidence": "Low|Medium|High",
-      "message": "One-sentence issue, then why it matters, then how to fix."
+      "message": "One-sentence issue, then why it matters, then how to fix.",
+      "promptForAgents": "Couple sentences, with file and lines, instructing AI Agents on a suggestion on how to fix this comment"
     }
   ]
 }

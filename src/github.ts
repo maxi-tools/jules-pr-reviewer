@@ -156,14 +156,26 @@ export async function submitReview(
     const confidenceEmoji =
       c.confidence === "High" ? "🟢" : c.confidence === "Medium" ? "🟡" : "🔴";
 
+    let body = `<!-- jules-inline-comment -->
+**Severity:** ${severityEmoji} ${c.severity} | **Confidence:** ${confidenceEmoji} ${c.confidence}
+
+${c.message}`;
+
+    if (c.promptForAgents) {
+      body += `
+
+<details>
+<summary>🤖 Prompt for Agents</summary>
+
+${c.promptForAgents}
+</details>`;
+    }
+
     return {
       path: c.file,
       line: c.line,
       side: "RIGHT" as const,
-      body: `<!-- jules-inline-comment -->
-**Severity:** ${severityEmoji} ${c.severity} | **Confidence:** ${confidenceEmoji} ${c.confidence}
-
-${c.message}`,
+      body,
     };
   });
 
