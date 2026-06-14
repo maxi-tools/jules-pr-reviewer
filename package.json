@@ -5,7 +5,9 @@
   "description": "GitHub Action that uses Google Jules to review pull requests and post review comments.",
   "scripts": {
     "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "repository": {
     "type": "git",
@@ -26,6 +28,8 @@
   "devDependencies": {
     "@types/node": "^25.6.0",
     "@vercel/ncc": "^0.38.4",
-    "typescript": "^6.0.3"
+    "@vitest/coverage-v8": "^4.1.8",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
   }
 }

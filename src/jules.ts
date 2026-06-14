@@ -1,13 +1,17 @@
-import * as core from '@actions/core';
-import { jules } from '@google/jules-sdk';
-import { ReviewResult } from './types.js';
+import * as core from "@actions/core";
+import { jules } from "@google/jules-sdk";
+import { ReviewResult } from "./types.js";
 
 export async function runJulesReview(
-  apiKey: string, prompt: string, source: any, timeoutMinutes: number
-): Promise<{ reviewResult: ReviewResult | null, sessionId: string }> {
+  apiKey: string,
+  prompt: string,
+  source: any,
+  timeoutMinutes: number,
+): Promise<{ reviewResult: ReviewResult | null; sessionId: string }> {
   const customJules = jules.with({ apiKey });
 
-  core.info('Creating Jules review session…');
+  core.info("Creating Jules review session…");
+
   const session = await customJules.session({
     prompt,
     source,
@@ -18,7 +22,10 @@ export async function runJulesReview(
 
   await waitUntilSessionReady(session);
 
-  const reviewMessage = await pollForReview(session as any, timeoutMinutes * 60 * 1000);
+  const reviewMessage = await pollForReview(
+    session as any,
+    timeoutMinutes * 60 * 1000,
+  );
   core.info(`Collected review (${reviewMessage.length} chars)`);
 
   if (!reviewMessage) {
@@ -49,11 +56,14 @@ function parseJulesResponse(message: string): ReviewResult {
   try {
     return JSON.parse(message) as ReviewResult;
   } catch (e) {
-    throw new Error('Failed to parse Jules response as JSON');
+    throw new Error("Failed to parse Jules response as JSON");
   }
 }
 
-async function waitUntilSessionReady(session: { id: string; info: () => Promise<unknown> }): Promise<void> {
+async function waitUntilSessionReady(session: {
+  id: string;
+  info: () => Promise<unknown>;
+}): Promise<void> {
   const maxAttempts = 20;
   let delay = 2000;
   for (let i = 0; i < maxAttempts; i++) {
@@ -64,21 +74,27 @@ async function waitUntilSessionReady(session: { id: string; info: () => Promise<
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (isAuthError(msg)) {
-        throw new Error(`Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`);
+        throw new Error(
+          `Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`,
+        );
       }
-      if (!msg.includes('404')) {
+      if (!msg.includes("404")) {
         throw new Error(`Jules session.info() failed: ${msg}`);
       }
       core.info(`Session not yet ready (attempt ${i + 1}/${maxAttempts})…`);
-      await new Promise(r => setTimeout(r, delay));
+      await new Promise((r) => setTimeout(r, delay));
       delay = Math.min(delay * 1.5, 15000);
     }
   }
-  throw new Error('Session did not become ready within timeout.');
+  throw new Error("Session did not become ready within timeout.");
 }
 
 async function pollForReview(
-  session: { id: string; hydrate: () => Promise<number>; history: () => AsyncIterable<any> },
+  session: {
+    id: string;
+    hydrate: () => Promise<number>;
+    history: () => AsyncIterable<any>;
+  },
   timeoutMs: number,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
@@ -87,9 +103,9 @@ async function pollForReview(
     attempt++;
     try {
       await session.hydrate();
-      let last = '';
+      let last = "";
       for await (const a of session.history()) {
-        if (a.type === 'agentMessaged') last = a.message;
+        if (a.type === "agentMessaged") last = a.message;
       }
       if (last) {
         core.info(`Got agentMessaged on attempt ${attempt}.`);
@@ -99,26 +115,32 @@ async function pollForReview(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (isAuthError(msg)) {
-        throw new Error(`Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`);
+        throw new Error(
+          `Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`,
+        );
       }
       core.info(`hydrate/history error (attempt ${attempt}): ${msg}`);
     }
-    await new Promise(r => setTimeout(r, 20_000));
+    await new Promise((r) => setTimeout(r, 20_000));
   }
-  return '';
+  return "";
 }
 
 export function isAuthError(msg: string): boolean {
   return /\b(?:401|403)\b/.test(msg);
 }
 
-export function wrapPermissionError(err: unknown, needed: string, op: string): Error {
+export function wrapPermissionError(
+  err: unknown,
+  needed: string,
+  op: string,
+): Error {
   const msg = err instanceof Error ? err.message : String(err);
-  if (isAuthError(msg) || msg.includes('Resource not accessible')) {
+  if (isAuthError(msg) || msg.includes("Resource not accessible")) {
     return new Error(
       `${op} failed with 403. The github_token likely lacks ${needed}. Add to your workflow:\n` +
-      `    permissions:\n      pull-requests: write\n      contents: read\n      statuses: write\n` +
-      `(original: ${msg})`,
+        `    permissions:\n      pull-requests: write\n      contents: read\n      statuses: write\n` +
+        `(original: ${msg})`,
     );
   }
   return err instanceof Error ? err : new Error(msg);
