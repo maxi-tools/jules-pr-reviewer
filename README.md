@@ -2,35 +2,32 @@
 
 A GitHub Action that uses [Google Jules](https://jules.google) (Gemini-powered cloud coding agent) to review pull requests and post the review as a PR comment. Optionally gates merges via a commit status check.
 
+*Special thanks to [@sanjay3290](https://github.com/sanjay3290) for the original work in the base action*
+
 - Works on any language / framework — Jules is general-purpose.
 - Low noise by default: aggressive false-positive filter baked into the prompt.
 - Extensible: layer your own rules from the workflow or from a file in the repo.
-- Per-PR comment with severity-tagged findings + a merge gate.
+- **Line-level Comments**: Posts findings directly on the specific lines of code in the PR.
+- **Auto-resolves threads**: Automatically resolves its own comments if you fix the issue and push a new commit.
+- **Incremental reviews**: Only reviews the new changes between pushes (on `synchronize` events) to save time and tokens.
 
 ## What a review looks like
 
-```
-## Summary
-Adds a /user lookup endpoint and an /admin check. Three critical security flaws need fixing before merge.
+Instead of a single monolithic comment, Jules leaves **inline, line-level comments** on the PR:
 
-## Strengths
-- Endpoint routing is clean and easy to follow.
+**On `src/db.js`, line 4:**
+> <!-- jules-inline-comment -->
+> **Severity:** 🚨 High | **Confidence:** 🟢 High
+> 
+> SQL injection — the id parameter is interpolated into the query. Use parameterized queries.
 
-## Findings
-### [BLOCKING]
-- `src/db.js`, line 4: SQL injection — the id parameter is interpolated into the query. Use parameterized queries.
-- `src/server.js`, line 5: Hardcoded `sk_live_…` secret. Move to env var and rotate the token.
-- `src/server.js`, line 18: Auth token passed via URL query string. Pass via Authorization header instead.
-
-### [WARN]
-- `src/server.js`, lines 12–14: No error handling around `getUserById`. Wrap in try/catch and return 500.
-
-### [NIT]
-- `src/db.js`, line 1: Unused `createConnection` import.
-
-## Verdict
-VERDICT: block
-```
+It will also post a general summary as a standard PR comment:
+> ## 🤖 Jules Review
+> 
+> Adds a /user lookup endpoint and an /admin check. Three critical security flaws need fixing before merge.
+> 
+> ---
+> _Session: `...`_
 
 ## Setup
 
@@ -99,8 +96,8 @@ Best for quick tweaks or project-level rules.
       - Missing await on a returned Future is BLOCKING.
 
       Soft rules:
-      - Prefer const constructors where possible — raise as NIT.
-      - All public APIs must have dartdoc — raise as WARN.
+      - Prefer const constructors where possible — raise as warning.
+      - All public APIs must have dartdoc — raise as info.
 ```
 
 ### B. Rules file in the repo
@@ -122,7 +119,7 @@ Best when rules are long, evolving, or shared across workflows. Default path: `.
 - Tests are linted separately — don't review test files.
 ```
 
-The action reads the file from the PR's head commit. Override the path with `rules_file:` or disable with `rules_file: ""`.
+The action reads the file from the PR's base commit. Override the path with `rules_file:` or disable with `rules_file: ""`.
 
 ### C. Both
 
@@ -141,22 +138,29 @@ The workflow's `extra_instructions` is appended after the rules file content. Us
 | `status_context` | `jules/review` | Commit status context name. |
 | `extra_instructions` | `''` | Markdown appended to the prompt. |
 | `rules_file` | `.github/jules-review-rules.md` | Path in repo to load as extra rules. Set empty to disable. |
+| `timeout_minutes` | `30` | How long to wait for Jules to return a review. |
 
-## Severity & verdict
+## Severity, Confidence, & Verdict
 
-Jules is instructed to tag findings:
+Jules is instructed to return structured JSON data that parses each finding into its own PR review comment, complete with severity and confidence tags:
 
-- **[BLOCKING]** — high-confidence correctness/security flaws. Only used when Jules is >80% sure.
-- **[WARN]** — meaningful concerns, non-blocking.
-- **[NIT]** — small readability / consistency notes. Capped at 3 per review.
+- **Severity**:
+  - 🚨 **High**: High-confidence correctness/security flaws, data loss risks, broken auth, obvious bugs.
+  - ⚠️ **Warning**: Meaningful concerns worth addressing but not blocking.
+  - ℹ️ **Info**: Small readability or consistency notes. Used sparingly.
 
-And end with a verdict line:
+- **Confidence**:
+  - 🟢 **High**
+  - 🟡 **Medium**
+  - 🔴 **Low**
+
+Jules also generates a summary and a final verdict line:
 
 | Verdict | Meaning |
 |---|---|
-| `VERDICT: approve` | No blocking issues. |
-| `VERDICT: comment` | Warnings or nits only. |
-| `VERDICT: block` | One or more blocking issues. |
+| `approve` | No blocking issues. |
+| `comment` | Warnings or infos only. |
+| `block` | One or more high severity issues. |
 
 `fail_on` maps verdict → status:
 
@@ -167,6 +171,14 @@ And end with a verdict line:
 | `any` | success | **failure** | **failure** |
 
 The **workflow job itself always passes** if the action ran successfully — the status check is what gates merge. Job failures indicate the action broke, not that the review found issues.
+
+## Inner Workings & Architecture
+
+Behind the scenes, this action works by compiling a prompt combining the PR details, the incremental or full diff, your custom instructions, and a strict JSON schema requirement. 
+
+- **Incremental Diffing**: On `synchronize` events, the action only pulls the diff between the previous state and the new state, rather than fetching the entire PR diff. This prevents repeating comments on untouched code and speeds up the review process.
+- **Auto-Resolving Threads**: The action fetches open PR review threads and includes them in the prompt. If Jules determines that a new commit fixes the issue raised in a comment, it signals the action to automatically mark the GitHub conversation thread as **resolved**.
+- **JSON Parsing**: By enforcing a strict JSON output from Jules, the action can decouple the language generation from the GitHub API calls, easily formatting individual line comments for `octokit.rest.pulls.createReview`.
 
 ## Prerequisites
 
@@ -186,7 +198,7 @@ Then run: `JULES_API_KEY=... node list-sources.mjs`
 ## Security
 
 - **Only `pull_request` is supported.** `pull_request_target` is rejected — it runs with base-repo write tokens, and exposes the action to prompt-injection via attacker-controlled diffs.
-- **Fork PRs are skipped by default** (`skip_forks: true`). An untrusted fork's diff/PR description can contain prompt-injection payloads. The action's system prompt has defense-in-depth instructions telling Jules to ignore instructions embedded in untrusted content and flag them as blocking — but skipping forks is the safer default.
+- **Fork PRs are skipped by default** (`skip_forks: true`). An untrusted fork's diff/PR description can contain prompt-injection payloads.
 - **`rules_file` is loaded from the base SHA**, not the PR head. An attacker cannot change the review rules by editing them in their PR.
 - **All untrusted content is fenced** in the prompt as "UNTRUSTED" with explicit instructions to Jules.
 - **Failure modes are resilient**: if Jules times out, the API errors, or the action crashes, the commit status is set to `error` and the PR comment is updated with a failure note — merge isn't silently blocked by a stale `pending` check.
@@ -197,6 +209,20 @@ Then run: `JULES_API_KEY=... node list-sources.mjs`
 - **Cost**: each PR open/push creates one Jules session. Rate-limit via `bypass_label`, label-gated workflow triggers, or `paths:` filters.
 - **Drafts**: skipped by default; mark `ready_for_review` to trigger.
 - **Large diffs**: diff is truncated at 80 KB. When truncated, the prompt tells Jules its review may be incomplete.
+
+## Development
+
+This action uses `pnpm` for package management.
+
+To install dependencies:
+```bash
+pnpm install
+```
+
+To build the action into the `dist` folder:
+```bash
+pnpm run build
+```
 
 ## License
 
