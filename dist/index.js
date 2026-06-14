@@ -36260,12 +36260,13 @@ function getOctokit(token, options, ...additionalPlugins) {
 async function fetchDiff(octokit, owner, repo, pr, baseShaForDiff, headSha) {
     try {
         const compare = await octokit.rest.repos.compareCommitsWithBasehead({
-            owner, repo,
+            owner,
+            repo,
             basehead: `${baseShaForDiff}...${headSha}`,
-            mediaType: { format: 'diff' },
+            mediaType: { format: "diff" },
         });
         const data = compare.data;
-        if (typeof data === 'string')
+        if (typeof data === "string")
             return data;
     }
     catch (err) {
@@ -36273,24 +36274,32 @@ async function fetchDiff(octokit, owner, repo, pr, baseShaForDiff, headSha) {
     }
     // fallback to full PR diff
     const res = await octokit.rest.pulls.get({
-        owner, repo, pull_number: pr.number, mediaType: { format: 'diff' },
+        owner,
+        repo,
+        pull_number: pr.number,
+        mediaType: { format: "diff" },
     });
     const data = res.data;
-    if (typeof data === 'string')
+    if (typeof data === "string")
         return data;
-    throw new Error('GitHub returned no diff text.');
+    throw new Error("GitHub returned no diff text.");
 }
 async function loadRulesFromBase(octokit, owner, repo, path, baseSha) {
     try {
-        const file = await octokit.rest.repos.getContent({ owner, repo, path, ref: baseSha });
-        if ('content' in file.data && typeof file.data.content === 'string') {
-            const content = Buffer.from(file.data.content, 'base64').toString('utf8');
+        const file = await octokit.rest.repos.getContent({
+            owner,
+            repo,
+            path,
+            ref: baseSha,
+        });
+        if ("content" in file.data && typeof file.data.content === "string") {
+            const content = Buffer.from(file.data.content, "base64").toString("utf8");
             info(`Loaded ${content.length} chars from ${path} at base SHA`);
             return content;
         }
         return undefined;
     }
-    catch (err) {
+    catch {
         return undefined;
     }
 }
@@ -36317,7 +36326,12 @@ async function fetchOpenThreads(octokit, owner, repo, prNumber) {
       }
     }
   `;
-    const response = await octokit.graphql(query, { owner, repo, pr: prNumber });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await octokit.graphql(query, {
+        owner,
+        repo,
+        pr: prNumber,
+    });
     const threads = response.repository?.pullRequest?.reviewThreads?.nodes || [];
     let index = 1;
     const result = [];
@@ -36327,13 +36341,13 @@ async function fetchOpenThreads(octokit, owner, repo, prNumber) {
         const firstComment = thread.comments.nodes[0];
         if (!firstComment)
             continue;
-        if (firstComment.body.includes('<!-- jules-inline-comment -->')) {
+        if (firstComment.body.includes("<!-- jules-inline-comment -->")) {
             result.push({
                 index: index++,
                 threadId: thread.id,
                 path: firstComment.path,
                 line: firstComment.line || 0,
-                body: firstComment.body
+                body: firstComment.body,
             });
         }
     }
@@ -36357,17 +36371,17 @@ async function resolveThreads(octokit, threadIds) {
     }
 }
 async function submitReview(octokit, owner, repo, prNumber, headSha, summary, comments) {
-    const formattedComments = comments.map(c => {
-        const severityEmoji = c.severity === 'High' ? '🚨' : c.severity === 'Warning' ? '⚠️' : 'ℹ️';
-        const confidenceEmoji = c.confidence === 'High' ? '🟢' : c.confidence === 'Medium' ? '🟡' : '🔴';
+    const formattedComments = comments.map((c) => {
+        const severityEmoji = c.severity === "High" ? "🚨" : c.severity === "Warning" ? "⚠️" : "ℹ️";
+        const confidenceEmoji = c.confidence === "High" ? "🟢" : c.confidence === "Medium" ? "🟡" : "🔴";
         return {
             path: c.file,
             line: c.line,
-            side: 'RIGHT',
+            side: "RIGHT",
             body: `<!-- jules-inline-comment -->
 **Severity:** ${severityEmoji} ${c.severity} | **Confidence:** ${confidenceEmoji} ${c.confidence}
 
-${c.message}`
+${c.message}`,
         };
     });
     await octokit.rest.pulls.createReview({
@@ -36375,14 +36389,19 @@ ${c.message}`
         repo,
         pull_number: prNumber,
         commit_id: headSha,
-        event: 'COMMENT',
+        event: "COMMENT",
         body: summary,
-        comments: formattedComments
+        comments: formattedComments,
     });
 }
 async function setStatus(octokit, owner, repo, sha, context, state, description) {
     await octokit.rest.repos.createCommitStatus({
-        owner, repo, sha, state, context, description,
+        owner,
+        repo,
+        sha,
+        state,
+        context,
+        description,
     });
 }
 
@@ -40745,9 +40764,11 @@ const jules = connect();
 ;// CONCATENATED MODULE: ./src/jules.ts
 
 
-async function runJulesReview(apiKey, prompt, source, timeoutMinutes) {
+async function runJulesReview(apiKey, prompt, 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+source, timeoutMinutes) {
     const customJules = jules.with({ apiKey });
-    info('Creating Jules review session…');
+    info("Creating Jules review session…");
     const session = await customJules.session({
         prompt,
         source,
@@ -40756,7 +40777,9 @@ async function runJulesReview(apiKey, prompt, source, timeoutMinutes) {
     });
     info(`Jules session: ${session.id}`);
     await waitUntilSessionReady(session);
-    const reviewMessage = await pollForReview(session, timeoutMinutes * 60 * 1000);
+    const reviewMessage = await pollForReview(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    session, timeoutMinutes * 60 * 1000);
     info(`Collected review (${reviewMessage.length} chars)`);
     if (!reviewMessage) {
         return { reviewResult: null, sessionId: session.id };
@@ -40777,7 +40800,7 @@ function parseJulesResponse(message) {
         try {
             return JSON.parse(jsonMatch[1]);
         }
-        catch (e) {
+        catch {
             // fallback
         }
     }
@@ -40786,7 +40809,7 @@ function parseJulesResponse(message) {
         return JSON.parse(message);
     }
     catch (e) {
-        throw new Error('Failed to parse Jules response as JSON');
+        throw new Error("Failed to parse Jules response as JSON", { cause: e });
     }
 }
 async function waitUntilSessionReady(session) {
@@ -40801,17 +40824,17 @@ async function waitUntilSessionReady(session) {
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             if (isAuthError(msg)) {
-                throw new Error(`Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`);
+                throw new Error(`Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`, { cause: err });
             }
-            if (!msg.includes('404')) {
-                throw new Error(`Jules session.info() failed: ${msg}`);
+            if (!msg.includes("404")) {
+                throw new Error(`Jules session.info() failed: ${msg}`, { cause: err });
             }
             info(`Session not yet ready (attempt ${i + 1}/${maxAttempts})…`);
-            await new Promise(r => setTimeout(r, delay));
+            await new Promise((r) => setTimeout(r, delay));
             delay = Math.min(delay * 1.5, 15000);
         }
     }
-    throw new Error('Session did not become ready within timeout.');
+    throw new Error("Session did not become ready within timeout.");
 }
 async function pollForReview(session, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
@@ -40820,9 +40843,9 @@ async function pollForReview(session, timeoutMs) {
         attempt++;
         try {
             await session.hydrate();
-            let last = '';
+            let last = "";
             for await (const a of session.history()) {
-                if (a.type === 'agentMessaged')
+                if (a.type === "agentMessaged")
                     last = a.message;
             }
             if (last) {
@@ -40834,22 +40857,22 @@ async function pollForReview(session, timeoutMs) {
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             if (isAuthError(msg)) {
-                throw new Error(`Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`);
+                throw new Error(`Jules API rejected request (${msg}). Check JULES_API_KEY is valid.`, { cause: err });
             }
             info(`hydrate/history error (attempt ${attempt}): ${msg}`);
         }
-        await new Promise(r => setTimeout(r, 20_000));
+        await new Promise((r) => setTimeout(r, 20_000));
     }
-    return '';
+    return "";
 }
 function isAuthError(msg) {
     return /\b(?:401|403)\b/.test(msg);
 }
 function wrapPermissionError(err, needed, op) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (isAuthError(msg) || msg.includes('Resource not accessible')) {
+    if (isAuthError(msg) || msg.includes("Resource not accessible")) {
         return new Error(`${op} failed with 403. The github_token likely lacks ${needed}. Add to your workflow:\n` +
-            `    permissions:\n      pull-requests: write\n      contents: read\n      statuses: write\n` +
+            "    permissions:\n      pull-requests: write\n      contents: read\n      statuses: write\n" +
             `(original: ${msg})`);
     }
     return err instanceof Error ? err : new Error(msg);
@@ -40857,15 +40880,15 @@ function wrapPermissionError(err, needed, op) {
 
 ;// CONCATENATED MODULE: ./src/prompt.ts
 function buildReviewPrompt(args) {
-    const { repoFullName, prNumber, prTitle, prBody, diff, diffTruncatedNote, extraInstructions, rulesFromFile, openThreads } = args;
-    let threadsContext = '';
+    const { repoFullName, prNumber, prTitle, prBody, diff, diffTruncatedNote, extraInstructions, rulesFromFile, openThreads, } = args;
+    let threadsContext = "";
     if (openThreads && openThreads.length > 0) {
         threadsContext = `
 # Open Review Comments
 Here are previous review comments made by you that are still unresolved.
 Evaluate if the current diff addresses them. If they are addressed and fixed, include their index in \`resolvedCommentIds\`.
 
-${openThreads.map(t => `[Index ${t.index}] File: ${t.path}, Line: ${t.line}\nComment: ${t.body}`).join('\n\n')}
+${openThreads.map((t) => `[Index ${t.index}] File: ${t.path}, Line: ${t.line}\nComment: ${t.body}`).join("\n\n")}
 `;
     }
     return `You are an expert code reviewer. Review the pull request below with high precision and minimal false positives.
@@ -40882,20 +40905,24 @@ ${repoFullName} (PR #${prNumber})
 ${prTitle}
 
 # UNTRUSTED: PR description
-${prBody || '(no description)'}
+${prBody || "(no description)"}
 
 # UNTRUSTED: Incremental Diff to Review
-${diffTruncatedNote ? `NOTE: ${diffTruncatedNote}\n` : ''}
+${diffTruncatedNote ? `NOTE: ${diffTruncatedNote}\n` : ""}
 \`\`\`diff
 ${diff}
 \`\`\`
-${rulesFromFile ? `
+${rulesFromFile
+        ? `
 # UNTRUSTED: Project-specific rules
 ${rulesFromFile}
-` : ''}${extraInstructions ? `
+`
+        : ""}${extraInstructions
+        ? `
 # Trusted: Additional instructions
 ${extraInstructions}
-` : ''}
+`
+        : ""}
 ${threadsContext}
 
 # What to review
@@ -40942,38 +40969,38 @@ You MUST output your review as a JSON object, wrapped in a \`\`\`json block. Do 
 
 
 
-const COMMENT_MARKER = '<!-- jules-pr-reviewer -->';
-const VALID_FAIL_ON = ['never', 'blocking', 'any'];
+const COMMENT_MARKER = "<!-- jules-pr-reviewer -->";
+const VALID_FAIL_ON = ["never", "blocking", "any"];
 async function run() {
-    const apiKey = getInput('jules_api_key', { required: true });
+    const apiKey = getInput("jules_api_key", { required: true });
     core_setSecret(apiKey);
-    const token = getInput('github_token', { required: true });
-    const failOnRaw = getInput('fail_on');
+    const token = getInput("github_token", { required: true });
+    const failOnRaw = getInput("fail_on");
     if (!VALID_FAIL_ON.includes(failOnRaw)) {
-        setFailed(`Invalid fail_on: "${failOnRaw}". Must be one of: ${VALID_FAIL_ON.join(', ')}.`);
+        setFailed(`Invalid fail_on: "${failOnRaw}". Must be one of: ${VALID_FAIL_ON.join(", ")}.`);
         return;
     }
     const failOn = failOnRaw;
-    const skipDrafts = getBooleanInput('skip_drafts');
-    const skipForks = getBooleanInput('skip_forks');
-    const bypassLabel = getInput('bypass_label');
-    const statusContext = getInput('status_context');
-    const extraInstructions = getInput('extra_instructions');
-    const rulesFilePath = getInput('rules_file');
-    const timeoutMinutesRaw = getInput('timeout_minutes') || '30';
+    const skipDrafts = getBooleanInput("skip_drafts");
+    const skipForks = getBooleanInput("skip_forks");
+    const bypassLabel = getInput("bypass_label");
+    const statusContext = getInput("status_context");
+    const extraInstructions = getInput("extra_instructions");
+    const rulesFilePath = getInput("rules_file");
+    const timeoutMinutesRaw = getInput("timeout_minutes") || "30";
     const timeoutMinutes = Math.max(1, parseInt(timeoutMinutesRaw, 10) || 30);
     const ctx = github_context;
-    if (ctx.eventName === 'pull_request_target') {
-        setFailed('pull_request_target is not supported — it runs with base-repo write tokens and exposes the action to prompt-injection via attacker-controlled diffs. Use on: pull_request instead.');
+    if (ctx.eventName === "pull_request_target") {
+        setFailed("pull_request_target is not supported — it runs with base-repo write tokens and exposes the action to prompt-injection via attacker-controlled diffs. Use on: pull_request instead.");
         return;
     }
-    if (ctx.eventName !== 'pull_request') {
+    if (ctx.eventName !== "pull_request") {
         setFailed(`Unsupported event: ${ctx.eventName}. Use on: pull_request.`);
         return;
     }
     const pr = ctx.payload.pull_request;
     if (!pr) {
-        setFailed('No pull_request payload found.');
+        setFailed("No pull_request payload found.");
         return;
     }
     const owner = ctx.repo.owner;
@@ -40986,11 +41013,11 @@ async function run() {
     const labels = (pr.labels || []).map((l) => l.name);
     const octokit = getOctokit(token);
     if (isDraft && skipDrafts) {
-        info('Skipping draft PR.');
+        info("Skipping draft PR.");
         return;
     }
     if (isFork && skipForks) {
-        info('Skipping fork PR (skip_forks=true).');
+        info("Skipping fork PR (skip_forks=true).");
         return;
     }
     if (labels.includes(bypassLabel)) {
@@ -40999,14 +41026,14 @@ async function run() {
     }
     try {
         try {
-            await setStatus(octokit, owner, repo, headSha, statusContext, 'pending', 'Jules is reviewing this PR…');
+            await setStatus(octokit, owner, repo, headSha, statusContext, "pending", "Jules is reviewing this PR…");
         }
         catch (err) {
-            throw wrapPermissionError(err, 'statuses:write', 'createCommitStatus');
+            throw wrapPermissionError(err, "statuses:write", "createCommitStatus");
         }
         // Determine the base SHA for incremental diffing
         let baseShaForDiff = baseSha;
-        if (ctx.payload.action === 'synchronize' && ctx.payload.before) {
+        if (ctx.payload.action === "synchronize" && ctx.payload.before) {
             baseShaForDiff = ctx.payload.before;
             info(`Synchronize event detected. Reviewing incremental changes from ${baseShaForDiff} to ${headSha}`);
         }
@@ -41023,17 +41050,17 @@ async function run() {
         const prompt = buildReviewPrompt({
             repoFullName: `${owner}/${repo}`,
             prNumber,
-            prTitle: pr.title || '',
-            prBody: pr.body || '',
+            prTitle: pr.title || "",
+            prBody: pr.body || "",
             diff: diffText,
             diffTruncatedNote: truncatedNote,
             extraInstructions: extraInstructions || undefined,
             rulesFromFile,
-            openThreads
+            openThreads,
         });
         const { reviewResult, sessionId } = await runJulesReview(apiKey, prompt, { github: `${owner}/${repo}`, baseBranch: pr.base.ref }, timeoutMinutes);
         if (!reviewResult) {
-            await setStatus(octokit, owner, repo, headSha, statusContext, 'error', 'Jules did not return a valid review in time');
+            await setStatus(octokit, owner, repo, headSha, statusContext, "error", "Jules did not return a valid review in time");
             setFailed(`Jules returned no review message within ${timeoutMinutes} minutes.`);
             return;
         }
@@ -41041,8 +41068,8 @@ async function run() {
         // Resolve threads that the LLM identified as fixed
         if (resolvedCommentIds && resolvedCommentIds.length > 0) {
             const threadIdsToResolve = openThreads
-                .filter(t => resolvedCommentIds.includes(t.index))
-                .map(t => t.threadId);
+                .filter((t) => resolvedCommentIds.includes(t.index))
+                .map((t) => t.threadId);
             if (threadIdsToResolve.length > 0) {
                 await resolveThreads(octokit, threadIdsToResolve);
             }
@@ -41057,7 +41084,7 @@ async function run() {
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Review failed: ${msg}`);
-        await setStatus(octokit, owner, repo, headSha, statusContext, 'error', truncate(msg, 140)).catch(() => { });
+        await setStatus(octokit, owner, repo, headSha, statusContext, "error", truncate(msg, 140)).catch(() => { });
         setFailed(`Jules PR review failed: ${msg}`);
     }
 }
@@ -41071,22 +41098,28 @@ function truncateDiff(diff, maxChars) {
     };
 }
 function truncate(s, max) {
-    return s.length <= max ? s : s.slice(0, max - 1) + '…';
+    return s.length <= max ? s : s.slice(0, max - 1) + "…";
 }
 function statusFromVerdict(verdict, failOn) {
-    if (failOn === 'never') {
-        return { state: 'success', description: `Review complete (verdict: ${verdict})` };
+    if (failOn === "never") {
+        return {
+            state: "success",
+            description: `Review complete (verdict: ${verdict})`,
+        };
     }
-    if (failOn === 'any') {
-        return verdict === 'approve'
-            ? { state: 'success', description: 'Approved' }
-            : { state: 'failure', description: `Review verdict: ${verdict}` };
+    if (failOn === "any") {
+        return verdict === "approve"
+            ? { state: "success", description: "Approved" }
+            : { state: "failure", description: `Review verdict: ${verdict}` };
     }
-    return verdict === 'block'
-        ? { state: 'failure', description: 'Blocking issues found' }
-        : { state: 'success', description: `Review complete (verdict: ${verdict})` };
+    return verdict === "block"
+        ? { state: "failure", description: "Blocking issues found" }
+        : {
+            state: "success",
+            description: `Review complete (verdict: ${verdict})`,
+        };
 }
-run().catch(err => {
+run().catch((err) => {
     setFailed(err instanceof Error ? err.message : String(err));
 });
 
