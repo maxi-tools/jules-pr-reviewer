@@ -39,7 +39,16 @@ export async function runJulesReview(
     reviewResult = parseJulesResponse(reviewMessage);
   } catch (err) {
     core.error(`Failed to parse Jules response: ${err}`);
-    return { reviewResult: null, sessionId: session.id };
+    return {
+      reviewResult: {
+        summary:
+          "Jules returned an invalid response that could not be parsed. No valid code review comments are present.",
+        verdict: "comment",
+        resolvedCommentIds: [],
+        newComments: [],
+      },
+      sessionId: session.id,
+    };
   }
 
   return { reviewResult, sessionId: session.id };
