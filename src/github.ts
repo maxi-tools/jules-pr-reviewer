@@ -58,7 +58,8 @@ export async function loadRulesFromBase(
       return content;
     }
     return undefined;
-  } catch {
+  } catch (err) {
+    core.warning(`Failed to load rules from base: ${String(err)}`);
     return undefined;
   }
 }
