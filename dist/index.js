@@ -36386,6 +36386,7 @@ async function fetchOpenThreads(octokit, owner, repo, prNumber) {
                   path
                   line
                   author { login }
+                  viewerDidAuthor
                 }
               }
             }
@@ -36409,7 +36410,8 @@ async function fetchOpenThreads(octokit, owner, repo, prNumber) {
         const firstComment = thread.comments.nodes[0];
         if (!firstComment)
             continue;
-        if (firstComment.body.includes("<!-- jules-inline-comment -->")) {
+        if (firstComment.viewerDidAuthor &&
+            firstComment.body.includes("<!-- jules-inline-comment -->")) {
             result.push({
                 index: index++,
                 threadId: thread.id,
