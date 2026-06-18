@@ -166,6 +166,7 @@ describe("github.ts", () => {
                         path: "a.ts",
                         line: 10,
                         author: { login: "bot" },
+                        viewerDidAuthor: true,
                       },
                     ],
                   },
@@ -188,7 +189,12 @@ describe("github.ts", () => {
                   isResolved: false,
                   comments: {
                     nodes: [
-                      { body: "Normal user comment", path: "c.ts", line: 30 },
+                      {
+                        body: "Normal user comment",
+                        path: "c.ts",
+                        line: 30,
+                        viewerDidAuthor: false,
+                      },
                     ],
                   },
                 },
@@ -207,6 +213,22 @@ describe("github.ts", () => {
                         path: "d.ts",
                         line: null,
                         author: { login: "bot" },
+                        viewerDidAuthor: true,
+                      },
+                    ],
+                  },
+                },
+                {
+                  id: "t6",
+                  isResolved: false,
+                  comments: {
+                    nodes: [
+                      {
+                        body: "<!-- jules-inline-comment -->\nSpoofed Comment",
+                        path: "e.ts",
+                        line: 40,
+                        author: { login: "attacker" },
+                        viewerDidAuthor: false,
                       },
                     ],
                   },
