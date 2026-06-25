@@ -36546,22 +36546,63 @@ ${c.message}`;
 ${c.promptForAgents}
 </details>`;
         }
+        const startLine = c.startLine || c.line;
+        const endLine = c.endLine || startLine;
         return {
             path: c.file,
-            line: c.line,
+            ...(endLine > startLine
+                ? { start_line: startLine, start_side: "RIGHT", line: endLine }
+                : { line: c.line }),
             side: "RIGHT",
             body,
         };
     });
-    await octokit.rest.pulls.createReview({
-        owner,
-        repo,
-        pull_number: prNumber,
-        commit_id: headSha,
-        event: "COMMENT",
-        body: summary,
-        comments: formattedComments,
-    });
+    try {
+        await octokit.rest.pulls.createReview({
+            owner,
+            repo,
+            pull_number: prNumber,
+            commit_id: headSha,
+            event: "COMMENT",
+            body: summary,
+            comments: formattedComments,
+        });
+    }
+    catch (err) {
+        warning(`Failed to submit PR review; recording late feedback as a PR comment instead: ${String(err)}`);
+        await octokit.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number: prNumber,
+            body: buildLateFeedbackComment(summary, comments),
+        });
+    }
+}
+function buildLateFeedbackComment(summary, comments) {
+    const findings = comments
+        .map((comment, index) => {
+        const promptForAgents = comment.promptForAgents
+            ? `\n\n<details>\n<summary>Prompt for Agents</summary>\n\n${comment.promptForAgents}\n</details>`
+            : "";
+        return `### ${index + 1}. ${formatCommentLocation(comment)}
+
+**Severity:** ${comment.severity} | **Confidence:** ${comment.confidence}
+
+${comment.message}${promptForAgents}`;
+    })
+        .join("\n\n---\n\n");
+    return `<!-- jules-pr-reviewer late-feedback -->
+## Late Jules review feedback
+
+${summary}
+
+${findings}`;
+}
+function formatCommentLocation(comment) {
+    const startLine = comment.startLine || comment.line;
+    const endLine = comment.endLine || startLine;
+    const lineSuffix = endLine > startLine ? `${startLine}-${endLine}` : `${startLine}`;
+    return `${comment.file}:${lineSuffix}`;
 }
 async function setStatus(octokit, owner, repo, sha, context, state, description) {
     await octokit.rest.repos.createCommitStatus({
@@ -40930,7 +40971,70 @@ const jules = connect();
 
 //# sourceMappingURL=index.mjs.map
 
+;// CONCATENATED MODULE: ./src/format.ts
+function findReviewFormatIssues(review) {
+    const issues = [];
+    for (const [index, comment] of (review.newComments || []).entries()) {
+        const label = `comment ${index + 1} (${comment.file}:${comment.line})`;
+        const lines = comment.message.split("\n");
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            const line = lines[lineIndex];
+            if (line.includes("```suggestion") &&
+                !/^```\s*suggestion\s*$/.test(line)) {
+                issues.push(`${label} has a malformed suggestion fence on message line ${lineIndex + 1}; use exactly \`\`\`suggestion on its own line.`);
+            }
+            if (!/^```\s*suggestion\s*$/.test(line))
+                continue;
+            const closeIndex = lines.findIndex((candidate, candidateIndex) => candidateIndex > lineIndex && /^```\s*$/.test(candidate));
+            if (closeIndex === -1) {
+                issues.push(`${label} has an unclosed \`\`\`suggestion block.`);
+                continue;
+            }
+            if (closeIndex === lineIndex + 1) {
+                issues.push(`${label} has an empty \`\`\`suggestion block.`);
+            }
+            lineIndex = closeIndex;
+        }
+    }
+    return issues;
+}
+function buildFormatRepairPrompt(review, issues) {
+    return `Fix only the review response formatting.
+
+The previous response had GitHub suggested-change formatting issues:
+${issues.map((issue) => `- ${issue}`).join("\n")}
+
+Return the complete review JSON again. Preserve the same findings, files, lines, severities, confidence values, verdict, summary, and resolvedCommentIds unless a formatting issue requires changing a comment message.
+
+For concrete replacements, use GitHub suggested-change fences exactly like this inside the comment message:
+\`\`\`suggestion
+replacement code
+\`\`\`
+
+Previous review JSON:
+\`\`\`json
+${JSON.stringify(review, null, 2)}
+\`\`\``;
+}
+function buildJsonRepairPrompt(rawResponse, parseError) {
+    const message = parseError instanceof Error ? parseError.message : String(parseError);
+    return `Fix only the review response JSON.
+
+The previous response could not be parsed as the required review JSON.
+
+Parse error:
+${message}
+
+Return exactly one complete JSON object, optionally wrapped in a \`\`\`json fence. Preserve all valid findings from the previous response. Do not add prose outside the JSON.
+
+Previous response:
+\`\`\`text
+${rawResponse}
+\`\`\``;
+}
+
 ;// CONCATENATED MODULE: ./src/jules.ts
+
 
 
 async function runJulesReview(apiKey, prompt, 
@@ -40938,36 +41042,67 @@ async function runJulesReview(apiKey, prompt,
 source, timeoutMinutes) {
     const customJules = jules.with({ apiKey });
     info("Creating Jules review session…");
-    const session = await customJules.session({
+    const rawSession = await customJules.session({
         prompt,
         source,
         requireApproval: false,
         autoPr: false,
     });
+    const session = rawSession;
     info(`Jules session: ${session.id}`);
     await waitUntilSessionReady(session);
-    const reviewMessage = await pollForReview(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    session, timeoutMinutes * 60 * 1000);
+    const reviewMessage = await pollForReview(session, timeoutMinutes * 60 * 1000);
     info(`Collected review (${reviewMessage.length} chars)`);
     if (!reviewMessage) {
         return { reviewResult: null, sessionId: session.id };
     }
+    let latestReviewMessage = reviewMessage;
     let reviewResult;
     try {
-        reviewResult = parseJulesResponse(reviewMessage);
+        reviewResult = parseJulesResponse(latestReviewMessage);
     }
     catch (err) {
-        error(`Failed to parse Jules response: ${err}`);
-        return {
-            reviewResult: {
-                summary: "Jules returned an invalid response that could not be parsed. No valid code review comments are present.",
-                verdict: "comment",
-                resolvedCommentIds: [],
-                newComments: [],
-            },
-            sessionId: session.id,
-        };
+        warning(`Failed to parse Jules response; requesting same-session JSON repair: ${err}`);
+        await sendSessionMessage(session, buildJsonRepairPrompt(reviewMessage, err));
+        const repairedMessage = await pollForReview(session, timeoutMinutes * 60 * 1000, reviewMessage);
+        try {
+            reviewResult = parseJulesResponse(repairedMessage);
+            latestReviewMessage = repairedMessage;
+        }
+        catch (repairErr) {
+            error(`Failed to parse repaired Jules response: ${repairErr}`);
+            return {
+                reviewResult: {
+                    summary: "Jules returned an invalid response that could not be parsed after a same-session repair attempt. No valid code review comments are present.",
+                    verdict: "comment",
+                    resolvedCommentIds: [],
+                    newComments: [],
+                },
+                sessionId: session.id,
+            };
+        }
+    }
+    const formatIssues = findReviewFormatIssues(reviewResult);
+    if (formatIssues.length > 0) {
+        warning(`Jules response has ${formatIssues.length} suggested-change formatting issue(s); requesting a same-session revision.`);
+        await sendSessionMessage(session, buildFormatRepairPrompt(reviewResult, formatIssues));
+        const revisedMessage = await pollForReview(session, timeoutMinutes * 60 * 1000, latestReviewMessage);
+        if (revisedMessage) {
+            try {
+                const revisedResult = parseJulesResponse(revisedMessage);
+                const remainingIssues = findReviewFormatIssues(revisedResult);
+                if (remainingIssues.length > 0) {
+                    warning(`Jules revised response still has suggested-change formatting issue(s): ${remainingIssues.join(" ")}`);
+                }
+                else {
+                    reviewResult = revisedResult;
+                    latestReviewMessage = revisedMessage;
+                }
+            }
+            catch (revisionErr) {
+                warning(`Failed to parse Jules formatting revision; keeping previous parsed review result: ${revisionErr}`);
+            }
+        }
     }
     return { reviewResult, sessionId: session.id };
 }
@@ -41013,7 +41148,7 @@ async function waitUntilSessionReady(session) {
     }
     throw new Error("Session did not become ready within timeout.");
 }
-async function pollForReview(session, timeoutMs) {
+async function pollForReview(session, timeoutMs, afterMessage) {
     const deadline = Date.now() + timeoutMs;
     let attempt = 0;
     while (Date.now() < deadline) {
@@ -41026,8 +41161,13 @@ async function pollForReview(session, timeoutMs) {
                     last = a.message;
             }
             if (last) {
-                info(`Got agentMessaged on attempt ${attempt}.`);
-                return last;
+                if (afterMessage !== undefined && last === afterMessage) {
+                    info(`Latest agentMessaged is unchanged (attempt ${attempt})…`);
+                }
+                else {
+                    info(`Got agentMessaged on attempt ${attempt}.`);
+                    return last;
+                }
             }
             info(`No agentMessaged yet (attempt ${attempt})…`);
         }
@@ -41041,6 +41181,13 @@ async function pollForReview(session, timeoutMs) {
         await new Promise((r) => setTimeout(r, 20_000));
     }
     return "";
+}
+async function sendSessionMessage(session, message) {
+    const send = session.prompt || session.message || session.sendMessage || session.send;
+    if (!send) {
+        throw new Error("Jules session does not expose a same-session message method for review repair.");
+    }
+    await send.call(session, message);
 }
 function isAuthError(msg) {
     return /\b(?:401|403)\b/.test(msg);
@@ -41133,10 +41280,13 @@ object is a total failure of your only function.
     {
       "file": "path/to/file.ext",
       "line": 42,
+      "startLine": 42,
+      "endLine": 42,
       "severity": "Warning",
       "confidence": "Medium",
       "message": "One sentence: the issue, then why it matters, then the fix.",
-      "promptForAgents": "1-2 sentences with file + lines telling an AI agent how to fix it."
+      "promptForAgents": "1-2 sentences with file + lines telling an AI agent how to fix it.",
+      "suggestedReplacement": "Exact replacement text for startLine..endLine when the fix is safely expressible as a structured suggestion; omit for broad fixes."
     }
   ]
 }
@@ -41149,6 +41299,7 @@ inside the object):
 - \`confidence\`: one of \`Low\`, \`Medium\`, \`High\`.
 - \`resolvedCommentIds\`: array of integer indices from "Open Review Comments" now fixed (\`[]\` if none).
 - \`newComments\`: \`[]\` when there are no findings.
+- \`startLine\` / \`endLine\` / \`suggestedReplacement\`: include all three only when the fix can be applied mechanically to the changed line range. Also mirror the same replacement in a GitHub \`\`\`suggestion fence inside \`message\` when possible. Omit these fields for broad or uncertain fixes.
 
 # Example reply (the ONLY shape your reply may take)
 For a diff that adds \`fn port(raw: &str) -> u16 { raw.trim().parse().unwrap() }\`:
@@ -41161,10 +41312,13 @@ For a diff that adds \`fn port(raw: &str) -> u16 { raw.trim().parse().unwrap() }
     {
       "file": "src/net.rs",
       "line": 2,
+      "startLine": 2,
+      "endLine": 2,
       "severity": "High",
       "confidence": "High",
-      "message": "\`unwrap()\` on \`parse()\` panics on any non-numeric input; reachable from external input, it crashes the process. Return a \`Result\` or a default instead.",
-      "promptForAgents": "In src/net.rs around line 2, change \`fn port\` to return \`Result<u16, _>\` and propagate the parse error instead of calling .unwrap()."
+      "message": "\`unwrap()\` on \`parse()\` panics on any non-numeric input; reachable from external input, it crashes the process. Return a \`Result\` instead.\n\`\`\`suggestion\nfn port(raw: &str) -> Result<u16, std::num::ParseIntError> { raw.trim().parse() }\n\`\`\`",
+      "promptForAgents": "In src/net.rs around line 2, change \`fn port\` to return \`Result<u16, _>\` and propagate the parse error instead of calling .unwrap().",
+      "suggestedReplacement": "fn port(raw: &str) -> Result<u16, std::num::ParseIntError> { raw.trim().parse() }"
     }
   ]
 }

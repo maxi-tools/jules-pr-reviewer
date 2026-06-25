@@ -12,12 +12,20 @@ describe("buildReviewPrompt", () => {
       openThreads: [],
     });
 
-    expect(prompt).toContain("# Repository\nowner/repo (PR #123)");
-    expect(prompt).toContain("# UNTRUSTED: PR title\nMy PR");
-    expect(prompt).toContain("# UNTRUSTED: PR description\nPR Description");
-    expect(prompt).toContain("```diff\n+ const a = 1;\n```");
-    expect(prompt).not.toContain("# UNTRUSTED: Project-specific rules");
-    expect(prompt).not.toContain("# Trusted: Additional instructions");
+    expect(prompt).toContain("# Repository (trusted)\nowner/repo (PR #123)");
+    expect(prompt).toContain("# PR title (UNTRUSTED data)");
+    expect(prompt).toContain("<<<BEGIN PR_TITLE ");
+    expect(prompt).toContain("My PR");
+    expect(prompt).toContain("# PR description (UNTRUSTED data)");
+    expect(prompt).toContain("<<<BEGIN PR_BODY ");
+    expect(prompt).toContain("PR Description");
+    expect(prompt).toContain("# Incremental diff to review (UNTRUSTED data)");
+    expect(prompt).toContain("<<<BEGIN DIFF ");
+    expect(prompt).toContain("+ const a = 1;");
+    expect(prompt).toContain('"suggestedReplacement"');
+    expect(prompt).toContain('"startLine"');
+    expect(prompt).toContain('"endLine"');
+    expect(prompt).not.toContain("# Project rules (authoritative");
     expect(prompt).not.toContain("NOTE: The diff was truncated");
     expect(prompt).not.toContain("# Open Review Comments");
   });
@@ -46,7 +54,8 @@ describe("buildReviewPrompt", () => {
       openThreads: [],
     });
 
-    expect(prompt).toContain("# UNTRUSTED: PR description\n(no description)");
+    expect(prompt).toContain("# PR description (UNTRUSTED data)");
+    expect(prompt).toContain("(no description)");
   });
 
   it("should include project specific rules", () => {
@@ -60,9 +69,8 @@ describe("buildReviewPrompt", () => {
       openThreads: [],
     });
 
-    expect(prompt).toContain(
-      "# UNTRUSTED: Project-specific rules\nDo not use console.log"
-    );
+    expect(prompt).toContain("# Project rules (authoritative");
+    expect(prompt).toContain("Do not use console.log");
   });
 
   it("should include extra instructions", () => {
@@ -76,7 +84,8 @@ describe("buildReviewPrompt", () => {
       openThreads: [],
     });
 
-    expect(prompt).toContain("# Trusted: Additional instructions\nBe nice");
+    expect(prompt).toContain("# Project rules (authoritative");
+    expect(prompt).toContain("Be nice");
   });
 
   it("should include open threads", () => {
@@ -98,8 +107,8 @@ describe("buildReviewPrompt", () => {
     });
 
     expect(prompt).toContain("# Open Review Comments");
-    expect(prompt).toContain(
-      "[Index 1] File: file.ts, Line: 10\nComment: Bad code"
-    );
+    expect(prompt).toContain("[Index 1] File: file.ts, Line: 10");
+    expect(prompt).toContain("<<<BEGIN THREAD 1 ");
+    expect(prompt).toContain("Bad code");
   });
 });

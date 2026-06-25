@@ -1,6 +1,23 @@
 import * as core from "@actions/core";
 import { jules } from "@google/jules-sdk";
 import { ReviewResult } from "./types.js";
+import {
+  buildFormatRepairPrompt,
+  buildJsonRepairPrompt,
+  findReviewFormatIssues,
+} from "./format.js";
+
+interface JulesSession {
+  id: string;
+  info: () => Promise<unknown>;
+  hydrate: () => Promise<number>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  history: () => AsyncIterable<any>;
+  prompt?: (message: string) => Promise<unknown>;
+  message?: (message: string) => Promise<unknown>;
+  sendMessage?: (message: string) => Promise<unknown>;
+  send?: (message: string) => Promise<unknown>;
+}
 
 export async function runJulesReview(
   apiKey: string,
@@ -13,19 +30,19 @@ export async function runJulesReview(
 
   core.info("Creating Jules review session…");
 
-  const session = await customJules.session({
+  const rawSession = await customJules.session({
     prompt,
     source,
     requireApproval: false,
     autoPr: false,
   });
+  const session = rawSession as unknown as JulesSession;
   core.info(`Jules session: ${session.id}`);
 
   await waitUntilSessionReady(session);
 
   const reviewMessage = await pollForReview(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    session as any,
+    session,
     timeoutMinutes * 60 * 1000
   );
   core.info(`Collected review (${reviewMessage.length} chars)`);
@@ -34,21 +51,73 @@ export async function runJulesReview(
     return { reviewResult: null, sessionId: session.id };
   }
 
+  let latestReviewMessage = reviewMessage;
   let reviewResult: ReviewResult;
   try {
-    reviewResult = parseJulesResponse(reviewMessage);
+    reviewResult = parseJulesResponse(latestReviewMessage);
   } catch (err) {
-    core.error(`Failed to parse Jules response: ${err}`);
-    return {
-      reviewResult: {
-        summary:
-          "Jules returned an invalid response that could not be parsed. No valid code review comments are present.",
-        verdict: "comment",
-        resolvedCommentIds: [],
-        newComments: [],
-      },
-      sessionId: session.id,
-    };
+    core.warning(
+      `Failed to parse Jules response; requesting same-session JSON repair: ${err}`
+    );
+    await sendSessionMessage(
+      session,
+      buildJsonRepairPrompt(reviewMessage, err)
+    );
+    const repairedMessage = await pollForReview(
+      session,
+      timeoutMinutes * 60 * 1000,
+      reviewMessage
+    );
+    try {
+      reviewResult = parseJulesResponse(repairedMessage);
+      latestReviewMessage = repairedMessage;
+    } catch (repairErr) {
+      core.error(`Failed to parse repaired Jules response: ${repairErr}`);
+      return {
+        reviewResult: {
+          summary:
+            "Jules returned an invalid response that could not be parsed after a same-session repair attempt. No valid code review comments are present.",
+          verdict: "comment",
+          resolvedCommentIds: [],
+          newComments: [],
+        },
+        sessionId: session.id,
+      };
+    }
+  }
+
+  const formatIssues = findReviewFormatIssues(reviewResult);
+  if (formatIssues.length > 0) {
+    core.warning(
+      `Jules response has ${formatIssues.length} suggested-change formatting issue(s); requesting a same-session revision.`
+    );
+    await sendSessionMessage(
+      session,
+      buildFormatRepairPrompt(reviewResult, formatIssues)
+    );
+    const revisedMessage = await pollForReview(
+      session,
+      timeoutMinutes * 60 * 1000,
+      latestReviewMessage
+    );
+    if (revisedMessage) {
+      try {
+        const revisedResult = parseJulesResponse(revisedMessage);
+        const remainingIssues = findReviewFormatIssues(revisedResult);
+        if (remainingIssues.length > 0) {
+          core.warning(
+            `Jules revised response still has suggested-change formatting issue(s): ${remainingIssues.join(" ")}`
+          );
+        } else {
+          reviewResult = revisedResult;
+          latestReviewMessage = revisedMessage;
+        }
+      } catch (revisionErr) {
+        core.warning(
+          `Failed to parse Jules formatting revision; keeping previous parsed review result: ${revisionErr}`
+        );
+      }
+    }
   }
 
   return { reviewResult, sessionId: session.id };
@@ -102,13 +171,9 @@ async function waitUntilSessionReady(session: {
 }
 
 async function pollForReview(
-  session: {
-    id: string;
-    hydrate: () => Promise<number>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    history: () => AsyncIterable<any>;
-  },
-  timeoutMs: number
+  session: JulesSession,
+  timeoutMs: number,
+  afterMessage?: string
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   let attempt = 0;
@@ -121,8 +186,12 @@ async function pollForReview(
         if (a.type === "agentMessaged") last = a.message;
       }
       if (last) {
+        if (afterMessage !== undefined && last === afterMessage) {
+          core.info(`Latest agentMessaged is unchanged (attempt ${attempt})…`);
+        } else {
         core.info(`Got agentMessaged on attempt ${attempt}.`);
         return last;
+        }
       }
       core.info(`No agentMessaged yet (attempt ${attempt})…`);
     } catch (err) {
@@ -138,6 +207,20 @@ async function pollForReview(
     await new Promise((r) => setTimeout(r, 20_000));
   }
   return "";
+}
+
+async function sendSessionMessage(
+  session: JulesSession,
+  message: string
+): Promise<void> {
+  const send =
+    session.prompt || session.message || session.sendMessage || session.send;
+  if (!send) {
+    throw new Error(
+      "Jules session does not expose a same-session message method for review repair."
+    );
+  }
+  await send.call(session, message);
 }
 
 export function isAuthError(msg: string): boolean {
