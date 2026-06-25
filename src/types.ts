@@ -24,10 +24,13 @@ export interface PromptArgs {
 export interface ReviewComment {
   file: string;
   line: number;
+  startLine?: number;
+  endLine?: number;
   severity: "Info" | "Warning" | "High";
   confidence: "Low" | "Medium" | "High";
   message: string;
   promptForAgents: string;
+  suggestedReplacement?: string;
 }
 
 export interface ReviewResult {

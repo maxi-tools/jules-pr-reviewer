@@ -172,23 +172,71 @@ ${c.promptForAgents}
 </details>`;
     }
 
+    const startLine = c.startLine || c.line;
+    const endLine = c.endLine || startLine;
     return {
       path: c.file,
-      line: c.line,
+      ...(endLine > startLine
+        ? { start_line: startLine, start_side: "RIGHT" as const, line: endLine }
+        : { line: c.line }),
       side: "RIGHT" as const,
       body,
     };
   });
 
-  await octokit.rest.pulls.createReview({
-    owner,
-    repo,
-    pull_number: prNumber,
-    commit_id: headSha,
-    event: "COMMENT",
-    body: summary,
-    comments: formattedComments,
-  });
+  try {
+    await octokit.rest.pulls.createReview({
+      owner,
+      repo,
+      pull_number: prNumber,
+      commit_id: headSha,
+      event: "COMMENT",
+      body: summary,
+      comments: formattedComments,
+    });
+  } catch (err) {
+    core.warning(
+      `Failed to submit PR review; recording late feedback as a PR comment instead: ${String(err)}`
+    );
+    await octokit.rest.issues.createComment({
+      owner,
+      repo,
+      issue_number: prNumber,
+      body: buildLateFeedbackComment(summary, comments),
+    });
+  }
+}
+
+function buildLateFeedbackComment(
+  summary: string,
+  comments: ReviewComment[]
+): string {
+  const findings = comments
+    .map((comment, index) => {
+      const promptForAgents = comment.promptForAgents
+        ? `\n\n<details>\n<summary>Prompt for Agents</summary>\n\n${comment.promptForAgents}\n</details>`
+        : "";
+      return `### ${index + 1}. ${formatCommentLocation(comment)}
+
+**Severity:** ${comment.severity} | **Confidence:** ${comment.confidence}
+
+${comment.message}${promptForAgents}`;
+    })
+    .join("\n\n---\n\n");
+
+  return `<!-- jules-pr-reviewer late-feedback -->
+## Late Jules review feedback
+
+${summary}
+
+${findings}`;
+}
+
+function formatCommentLocation(comment: ReviewComment): string {
+  const startLine = comment.startLine || comment.line;
+  const endLine = comment.endLine || startLine;
+  const lineSuffix = endLine > startLine ? `${startLine}-${endLine}` : `${startLine}`;
+  return `${comment.file}:${lineSuffix}`;
 }
 
 export async function setStatus(

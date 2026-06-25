@@ -268,6 +268,8 @@ describe("github.ts", () => {
       {
         file: "a.ts",
         line: 10,
+        startLine: 10,
+        endLine: 12,
         severity: "High",
         confidence: "High",
         message: "Msg",
@@ -301,7 +303,9 @@ describe("github.ts", () => {
       comments: [
         {
           path: "a.ts",
-          line: 10,
+          start_line: 10,
+          start_side: "RIGHT",
+          line: 12,
           side: "RIGHT",
           body: "<!-- jules-inline-comment -->\n**Severity:** 🚨 High | **Confidence:** 🟢 High\n\nMsg\n\n<details>\n<summary>🤖 Prompt for Agents</summary>\n\nFix this issue by doing X\n</details>",
         },
@@ -319,6 +323,56 @@ describe("github.ts", () => {
         },
       ],
     });
+  });
+
+  it("submitReview records late feedback as an issue comment when review submission is unavailable", async () => {
+    const octokit = {
+      rest: {
+        pulls: {
+          createReview: vi
+            .fn()
+            .mockRejectedValue(new Error("Pull request is closed")),
+        },
+        issues: { createComment: vi.fn().mockResolvedValue({}) },
+      },
+    } as any;
+
+    await submitReview(octokit, "owner", "repo", 1, "headSHA", "Summary text", [
+      {
+        file: "a.ts",
+        line: 10,
+        startLine: 10,
+        endLine: 12,
+        severity: "High",
+        confidence: "High",
+        message: "Msg\n```suggestion\nconst fixed = true;\n```",
+        promptForAgents: "",
+      },
+    ]);
+
+    expect(octokit.rest.issues.createComment).toHaveBeenCalledWith({
+      owner: "owner",
+      repo: "repo",
+      issue_number: 1,
+      body: expect.stringContaining("Late Jules review feedback"),
+    });
+    expect(octokit.rest.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining("a.ts:10"),
+      })
+    );
+    expect(octokit.rest.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining("a.ts:10-12"),
+      })
+    );
+    expect(octokit.rest.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining(
+          "```suggestion\nconst fixed = true;\n```"
+        ),
+      })
+    );
   });
 
   it("setStatus sets commit status", async () => {

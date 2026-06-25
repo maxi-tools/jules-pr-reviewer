@@ -61,7 +61,7 @@ export function buildReviewPrompt(args: PromptArgs): string {
       .map(
         (t) =>
           `[Index ${t.index}] File: ${t.path}, Line: ${t.line}\n` +
-          untrusted(`THREAD ${t.index}`, t.body),
+          untrusted(`THREAD ${t.index}`, t.body)
       )
       .join("\n\n");
     threadsContext = `
@@ -94,10 +94,13 @@ object is a total failure of your only function.
     {
       "file": "path/to/file.ext",
       "line": 42,
+      "startLine": 42,
+      "endLine": 42,
       "severity": "Warning",
       "confidence": "Medium",
       "message": "One sentence: the issue, then why it matters, then the fix.",
-      "promptForAgents": "1-2 sentences with file + lines telling an AI agent how to fix it."
+      "promptForAgents": "1-2 sentences with file + lines telling an AI agent how to fix it.",
+      "suggestedReplacement": "Exact replacement text for startLine..endLine when the fix is safely expressible as a structured suggestion; omit for broad fixes."
     }
   ]
 }
@@ -110,6 +113,7 @@ inside the object):
 - \`confidence\`: one of \`Low\`, \`Medium\`, \`High\`.
 - \`resolvedCommentIds\`: array of integer indices from "Open Review Comments" now fixed (\`[]\` if none).
 - \`newComments\`: \`[]\` when there are no findings.
+- \`startLine\` / \`endLine\` / \`suggestedReplacement\`: include all three only when the fix can be applied mechanically to the changed line range. Also mirror the same replacement in a GitHub \`\`\`suggestion fence inside \`message\` when possible. Omit these fields for broad or uncertain fixes.
 
 # Example reply (the ONLY shape your reply may take)
 For a diff that adds \`fn port(raw: &str) -> u16 { raw.trim().parse().unwrap() }\`:
@@ -122,10 +126,13 @@ For a diff that adds \`fn port(raw: &str) -> u16 { raw.trim().parse().unwrap() }
     {
       "file": "src/net.rs",
       "line": 2,
+      "startLine": 2,
+      "endLine": 2,
       "severity": "High",
       "confidence": "High",
-      "message": "\`unwrap()\` on \`parse()\` panics on any non-numeric input; reachable from external input, it crashes the process. Return a \`Result\` or a default instead.",
-      "promptForAgents": "In src/net.rs around line 2, change \`fn port\` to return \`Result<u16, _>\` and propagate the parse error instead of calling .unwrap()."
+      "message": "\`unwrap()\` on \`parse()\` panics on any non-numeric input; reachable from external input, it crashes the process. Return a \`Result\` instead.\n\`\`\`suggestion\nfn port(raw: &str) -> Result<u16, std::num::ParseIntError> { raw.trim().parse() }\n\`\`\`",
+      "promptForAgents": "In src/net.rs around line 2, change \`fn port\` to return \`Result<u16, _>\` and propagate the parse error instead of calling .unwrap().",
+      "suggestedReplacement": "fn port(raw: &str) -> Result<u16, std::num::ParseIntError> { raw.trim().parse() }"
     }
   ]
 }
@@ -192,5 +199,7 @@ ${threadsContext}`;
 Now output your review for this PR as exactly one \`\`\`json block matching the
 schema above — and nothing else. No prose. No text outside the block.`;
 
-  return [header, rulesSection, security, reviewGuidance, payload, closer].join("\n");
+  return [header, rulesSection, security, reviewGuidance, payload, closer].join(
+    "\n"
+  );
 }
